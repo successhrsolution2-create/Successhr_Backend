@@ -1,5 +1,5 @@
 const Company = require('../models/Company')
-const { emitToAdmin } = require('../socket')
+const { emitToAdmin, emitToBA } = require('../socket')
 
 const populateCompany = (query) => query.populate('submittedBy', 'name email')
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -51,6 +51,8 @@ const canAccess = (req, company) => {
   return req.user.role === 'superAdmin' || ownerId.toString() === req.user._id.toString()
 }
 
+const ownerUserId = (company) => company?.submittedBy?._id || company?.submittedBy
+
 const getCompanies = async (req, res) => {
   const query = req.user.role === 'superAdmin' ? {} : { submittedBy: req.user._id }
   const companies = await Company.find(query)
@@ -75,6 +77,7 @@ const createCompany = async (req, res) => {
 
   company = await Company.findById(company._id).populate('submittedBy', 'name email')
   emitToAdmin('new_company', company)
+  emitToBA(ownerUserId(company), 'company_updated', company)
 
   res.status(201).json(company)
 }
@@ -126,7 +129,12 @@ const updateCompany = async (req, res) => {
   await ensureUniqueCompanyIdentity(company, company._id)
 
   await company.save()
-  res.json(await Company.findById(company._id).populate('submittedBy', 'name email'))
+  const savedCompany = await Company.findById(company._id).populate('submittedBy', 'name email')
+
+  emitToAdmin('company_updated', savedCompany)
+  emitToBA(ownerUserId(savedCompany), 'company_updated', savedCompany)
+
+  res.json(savedCompany)
 }
 
 const deleteCompany = async (req, res) => {
@@ -136,7 +144,13 @@ const deleteCompany = async (req, res) => {
     return res.status(404).json({ message: 'Company reference not found' })
   }
 
+  const ownerId = ownerUserId(company)
+  const deletedId = company._id.toString()
   await company.deleteOne()
+
+  emitToAdmin('company_deleted', { id: deletedId })
+  emitToBA(ownerId, 'company_deleted', { id: deletedId })
+
   res.json({ message: 'Company reference deleted' })
 }
 
@@ -169,13 +183,17 @@ const updateCompanyStatus = async (req, res) => {
 
   await company.save()
 
+  const savedCompany = await Company.findById(company._id).populate('submittedBy', 'name email')
+
   emitToAdmin('status_updated', {
     type: 'company',
     id: company._id.toString(),
     status: company.status
   })
+  emitToAdmin('company_updated', savedCompany)
+  emitToBA(ownerUserId(savedCompany), 'company_updated', savedCompany)
 
-  res.json(await Company.findById(company._id).populate('submittedBy', 'name email'))
+  res.json(savedCompany)
 }
 
 const reorderCompanies = async (req, res) => {

@@ -1,5 +1,5 @@
 const Student = require('../models/Student')
-const { emitToAdmin } = require('../socket')
+const { emitToAdmin, emitToBA } = require('../socket')
 
 const documentUrl = (file) => `/uploads/${file.filename}`
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -76,6 +76,8 @@ const canAccess = (req, student) => {
   return req.user.role === 'superAdmin' || ownerId.toString() === req.user._id.toString()
 }
 
+const ownerUserId = (student) => student?.submittedBy?._id || student?.submittedBy
+
 const getStudents = async (req, res) => {
   const query = req.user.role === 'superAdmin' ? {} : { submittedBy: req.user._id }
   const students = await Student.find(query)
@@ -100,6 +102,7 @@ const createStudent = async (req, res) => {
 
   student = await Student.findById(student._id).populate('submittedBy', 'name email')
   emitToAdmin('new_student', student)
+  emitToBA(ownerUserId(student), 'student_updated', student)
 
   res.status(201).json(student)
 }
@@ -151,7 +154,12 @@ const updateStudent = async (req, res) => {
   await ensureUniqueStudentIdentity(student, student._id)
 
   await student.save()
-  res.json(await Student.findById(student._id).populate('submittedBy', 'name email'))
+  const savedStudent = await Student.findById(student._id).populate('submittedBy', 'name email')
+
+  emitToAdmin('student_updated', savedStudent)
+  emitToBA(ownerUserId(savedStudent), 'student_updated', savedStudent)
+
+  res.json(savedStudent)
 }
 
 const deleteStudent = async (req, res) => {
@@ -161,7 +169,13 @@ const deleteStudent = async (req, res) => {
     return res.status(404).json({ message: 'Student reference not found' })
   }
 
+  const ownerId = ownerUserId(student)
+  const deletedId = student._id.toString()
   await student.deleteOne()
+
+  emitToAdmin('student_deleted', { id: deletedId })
+  emitToBA(ownerId, 'student_deleted', { id: deletedId })
+
   res.json({ message: 'Student reference deleted' })
 }
 
@@ -191,7 +205,12 @@ const uploadStudentDocuments = async (req, res) => {
   })
 
   await student.save()
-  res.json(await Student.findById(student._id).populate('submittedBy', 'name email'))
+  const savedStudent = await Student.findById(student._id).populate('submittedBy', 'name email')
+
+  emitToAdmin('student_updated', savedStudent)
+  emitToBA(ownerUserId(savedStudent), 'student_updated', savedStudent)
+
+  res.json(savedStudent)
 }
 
 const updateStudentStatus = async (req, res) => {
@@ -223,13 +242,17 @@ const updateStudentStatus = async (req, res) => {
 
   await student.save()
 
+  const savedStudent = await Student.findById(student._id).populate('submittedBy', 'name email')
+
   emitToAdmin('status_updated', {
     type: 'student',
     id: student._id.toString(),
     status: student.status
   })
+  emitToAdmin('student_updated', savedStudent)
+  emitToBA(ownerUserId(savedStudent), 'student_updated', savedStudent)
 
-  res.json(await Student.findById(student._id).populate('submittedBy', 'name email'))
+  res.json(savedStudent)
 }
 
 const reorderStudents = async (req, res) => {
