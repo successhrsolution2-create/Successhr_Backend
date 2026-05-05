@@ -53,6 +53,10 @@ app.use((error, _req, res, _next) => {
     return res.status(400).json({ message: error.message })
   }
 
+  if (error.name === 'CastError') {
+    return res.status(400).json({ message: error.message || 'Invalid input value' })
+  }
+
   if (error.message?.includes('Only JPG')) {
     return res.status(400).json({ message: error.message })
   }

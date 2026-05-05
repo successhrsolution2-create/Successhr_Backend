@@ -109,6 +109,13 @@ const updateCompany = async (req, res) => {
     blocked.push('priorityOrder', 'status', 'adminNotes')
   }
 
+  const blockedFieldsSent = Object.keys(req.body || {}).filter((key) => blocked.includes(key))
+  if (blockedFieldsSent.length) {
+    return res.status(400).json({
+      message: `You cannot update these fields: ${blockedFieldsSent.join(', ')}`
+    })
+  }
+
   Object.entries(req.body).forEach(([key, value]) => {
     if (!blocked.includes(key)) {
       company[key] = value

@@ -80,7 +80,7 @@ const placementSchema = new mongoose.Schema(
   { timestamps: true }
 )
 
-placementSchema.pre('save', function updateEarning(next) {
+placementSchema.pre('save', function updateEarning() {
   const salary = Number(this.offeredSalaryPM || 0)
   const basis = Number(this.salaryBasis || 1)
   const percent = Number(this.earningPercent || 0)
@@ -90,7 +90,6 @@ placementSchema.pre('save', function updateEarning(next) {
   const safePercent = Number.isFinite(percent) ? percent : 0
 
   this.earningAmount = Math.round(safeSalary * safeBasis * (safePercent / 100))
-  next()
 })
 
 placementSchema.statics.selectionStatuses = selectionStatuses

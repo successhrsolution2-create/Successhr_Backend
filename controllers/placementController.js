@@ -59,6 +59,95 @@ const selectionStatusFromProcessStage = {
   on_hold: 'on_hold'
 }
 
+const validateDateInput = (value, fieldName) => {
+  if (value === undefined || value === null || value === '') return
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    const error = new Error(`${fieldName} must be a valid date`)
+    error.statusCode = 400
+    throw error
+  }
+}
+
+const parseNumericInput = (value) => {
+  if (value === undefined || value === null || value === '') return undefined
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string') {
+    const sanitized = value.replace(/,/g, '').trim()
+    if (!sanitized) return undefined
+    const parsed = Number(sanitized)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+const normalizeInterviewMode = (value) => {
+  if (value === undefined || value === null || value === '') return undefined
+  const raw = String(value).trim()
+  if (!raw) return undefined
+  const normalized = raw.toLowerCase()
+  const map = {
+    online: 'Online',
+    offline: 'Offline',
+    telephonic: 'Telephonic',
+    hybrid: 'Hybrid'
+  }
+  return map[normalized] || raw
+}
+
+const validatePlacementInput = (body) => {
+  if (body.offeredSalaryPM !== undefined && body.offeredSalaryPM !== null && body.offeredSalaryPM !== '') {
+    const offeredSalaryPM = parseNumericInput(body.offeredSalaryPM)
+    if (!Number.isFinite(offeredSalaryPM) || offeredSalaryPM < 0) {
+      const error = new Error('Offered salary must be a valid non-negative number')
+      error.statusCode = 400
+      throw error
+    }
+  }
+
+  if (body.earningPercent !== undefined && body.earningPercent !== null && body.earningPercent !== '') {
+    const earningPercent = parseNumericInput(body.earningPercent)
+    if (!Number.isFinite(earningPercent) || earningPercent < 0 || earningPercent > 100) {
+      const error = new Error('Earning percent must be between 0 and 100')
+      error.statusCode = 400
+      throw error
+    }
+  }
+
+  if (body.salaryBasis !== undefined && body.salaryBasis !== null && body.salaryBasis !== '') {
+    const salaryBasis = parseNumericInput(body.salaryBasis)
+    if (!Number.isFinite(salaryBasis) || !Number.isInteger(salaryBasis) || salaryBasis < 1 || salaryBasis > 12) {
+      const error = new Error('Salary basis must be an integer between 1 and 12')
+      error.statusCode = 400
+      throw error
+    }
+  }
+
+  if (body.selectionStatus && !Placement.selectionStatuses.includes(body.selectionStatus)) {
+    const error = new Error('Invalid selection status')
+    error.statusCode = 400
+    throw error
+  }
+
+  if (body.processStage && !Placement.processStages.includes(body.processStage)) {
+    const error = new Error('Invalid process stage')
+    error.statusCode = 400
+    throw error
+  }
+
+  const interviewMode = normalizeInterviewMode(body.interviewMode)
+  if (interviewMode && !Placement.interviewModes.includes(interviewMode)) {
+    const error = new Error('Invalid interview mode')
+    error.statusCode = 400
+    throw error
+  }
+
+  validateDateInput(body.joiningDate, 'Joining date')
+  validateDateInput(body.appointmentLetterDate, 'Appointment letter date')
+  validateDateInput(body.interviewDate, 'Interview date')
+  validateDateInput(body.earningPaidDate || body.commissionPaidDate, 'Paid date')
+}
+
 const normalizePlacementForResponse = (placement) => {
   const offeredSalaryPM = resolveOfferedSalaryPM(placement)
   const earningPercent = resolveEarningPercent(placement)
@@ -150,14 +239,24 @@ const toRoomPayload = (placement) => {
   }
 }
 
+const toAdminPlacementEventPayload = (placement) => {
+  const normalized = normalizePlacementForResponse(placement)
+  return {
+    placement: normalized,
+    studentName: normalized.studentId?.candidateName,
+    companyName: normalized.companyId?.companyName,
+    baName: normalized.baId?.name
+  }
+}
+
 const normalizePlacementInput = (body) => {
   const offeredSalaryPM =
-    body.offeredSalaryPM !== undefined ? Number(body.offeredSalaryPM) : parseLegacySalary(body.offeredSalary)
+    body.offeredSalaryPM !== undefined ? parseNumericInput(body.offeredSalaryPM) : parseLegacySalary(body.offeredSalary)
   const earningPercent =
-    body.earningPercent !== undefined ? Number(body.earningPercent) : Number(body.commissionPercent || 0)
+    body.earningPercent !== undefined ? parseNumericInput(body.earningPercent) : parseNumericInput(body.commissionPercent || 0)
   const salaryBasis =
     body.salaryBasis !== undefined && body.salaryBasis !== null && body.salaryBasis !== ''
-      ? Number(body.salaryBasis)
+      ? parseNumericInput(body.salaryBasis)
       : undefined
   const processStage = body.processStage || undefined
   let selectionStatus = body.selectionStatus
@@ -181,7 +280,7 @@ const normalizePlacementInput = (body) => {
     processStage: normalizedProcessStage,
     appointmentLetterDate: body.appointmentLetterDate || undefined,
     interviewDate: body.interviewDate || undefined,
-    interviewMode: body.interviewMode || undefined,
+    interviewMode: normalizeInterviewMode(body.interviewMode),
     processNotes: body.processNotes,
     earningPercent: Number.isFinite(earningPercent) ? earningPercent : undefined,
     salaryBasis: Number.isFinite(salaryBasis) ? salaryBasis : undefined,
@@ -203,7 +302,19 @@ const validateObjectId = (value, fieldName) => {
   }
 }
 
+const parseQueryDate = (value, fieldName) => {
+  if (!value) return undefined
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    const error = new Error(`${fieldName} must be a valid date`)
+    error.statusCode = 400
+    throw error
+  }
+  return parsed
+}
+
 const createPlacement = async (req, res) => {
+  validatePlacementInput(req.body)
   const payload = normalizePlacementInput(req.body)
   const { studentId, companyId } = payload
 
@@ -224,6 +335,10 @@ const createPlacement = async (req, res) => {
     return res.status(404).json({ message: 'Student reference not found' })
   }
 
+  if (!student.submittedBy) {
+    return res.status(400).json({ message: 'Student reference has no submitting advisor linked' })
+  }
+
   if (!company) {
     return res.status(404).json({ message: 'Company reference not found' })
   }
@@ -242,12 +357,7 @@ const createPlacement = async (req, res) => {
   const savedPlacement = await placementPopulate(Placement.findById(placement._id))
   const normalizedSavedPlacement = normalizePlacementForResponse(savedPlacement)
 
-  emitToAdmin('placement_created', {
-    placement: normalizedSavedPlacement,
-    studentName: normalizedSavedPlacement.studentId?.candidateName,
-    companyName: normalizedSavedPlacement.companyId?.companyName,
-    baName: normalizedSavedPlacement.baId?.name
-  })
+  emitToAdmin('placement_created', toAdminPlacementEventPayload(savedPlacement))
 
   emitToBA(savedPlacement.baId?._id || savedPlacement.baId, 'my_placement', toRoomPayload(savedPlacement))
 
@@ -258,16 +368,24 @@ const getPlacements = async (req, res) => {
   const query = {}
   const { baId, earningStatus, commissionStatus, selectionStatus, processStage, studentId, dateFrom, dateTo } = req.query
 
-  if (baId) query.baId = baId
+  if (baId) {
+    validateObjectId(baId, 'baId')
+    query.baId = baId
+  }
   if (earningStatus || commissionStatus) query.earningStatus = earningStatus || commissionStatus
   if (selectionStatus) query.selectionStatus = selectionStatus
   if (processStage) query.processStage = processStage
-  if (studentId) query.studentId = studentId
+  if (studentId) {
+    validateObjectId(studentId, 'studentId')
+    query.studentId = studentId
+  }
 
   if (dateFrom || dateTo) {
+    const from = parseQueryDate(dateFrom, 'dateFrom')
+    const to = parseQueryDate(dateTo, 'dateTo')
     query.createdAt = {}
-    if (dateFrom) query.createdAt.$gte = new Date(dateFrom)
-    if (dateTo) query.createdAt.$lte = new Date(dateTo)
+    if (from) query.createdAt.$gte = from
+    if (to) query.createdAt.$lte = to
   }
 
   const placements = await placementPopulate(Placement.find(query)).sort({ createdAt: -1 })
@@ -298,6 +416,7 @@ const getPlacementById = async (req, res) => {
 }
 
 const updatePlacement = async (req, res) => {
+  validatePlacementInput(req.body)
   const placement = await Placement.findById(req.params.id)
 
   if (!placement) {
@@ -351,12 +470,13 @@ const updatePlacement = async (req, res) => {
   const normalizedSavedPlacement = normalizePlacementForResponse(savedPlacement)
 
   emitToBA(savedPlacement.baId?._id || savedPlacement.baId, 'placement_updated', toRoomPayload(savedPlacement))
-  emitToBA(savedPlacement.baId?._id || savedPlacement.baId, 'my_placement', toRoomPayload(savedPlacement))
+  emitToAdmin('placement_updated', toAdminPlacementEventPayload(savedPlacement))
 
   res.json(normalizedSavedPlacement)
 }
 
 const markPlacementPaid = async (req, res) => {
+  validatePlacementInput(req.body)
   const placement = await Placement.findById(req.params.id)
 
   if (!placement) {
@@ -387,8 +507,12 @@ const markPlacementPaid = async (req, res) => {
     commissionAmount: normalizedSavedPlacement.earningAmount
   }
 
+  const baRoomPayload = toRoomPayload(savedPlacement)
   emitToBA(savedPlacement.baId?._id || savedPlacement.baId, 'earning_paid', paidPayload)
   emitToBA(savedPlacement.baId?._id || savedPlacement.baId, 'commission_paid', paidPayload)
+  emitToBA(savedPlacement.baId?._id || savedPlacement.baId, 'placement_updated', baRoomPayload)
+  emitToAdmin('placement_paid', toAdminPlacementEventPayload(savedPlacement))
+  emitToAdmin('placement_updated', toAdminPlacementEventPayload(savedPlacement))
 
   res.json(normalizedSavedPlacement)
 }
