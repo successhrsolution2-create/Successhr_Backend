@@ -3,7 +3,6 @@ require('express-async-errors')
 
 const express = require('express')
 const http = require('http')
-const path = require('path')
 const cors = require('cors')
 const connectDB = require('./config/db')
 const { corsOrigin } = require('./config/corsOptions')
@@ -25,8 +24,6 @@ app.use(
   })
 )
 app.use(express.json({ limit: '2mb' }))
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
-
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
 })

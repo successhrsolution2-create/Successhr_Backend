@@ -1,7 +1,7 @@
 const BusinessAdvisor = require('../models/BusinessAdvisor')
 const User = require('../models/User')
-
-const documentUrl = (file) => `/uploads/${file.filename}`
+const { uploadToS3 } = require('../utils/s3Upload')
+const { validateUploadFile } = require('../utils/fileValidation')
 
 const isComplete = (profile) => {
   const personalComplete = Boolean(
@@ -181,10 +181,11 @@ const uploadProfileDocument = async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'File is required' })
   }
+  validateUploadFile(req.file)
 
   const { docType } = req.body
   const profile = await ensureProfile(req.user)
-  const fileUrl = documentUrl(req.file)
+  const fileUrl = await uploadToS3(req.file, 'ba-documents')
 
   if (!attachUploadedFile(profile, docType, fileUrl)) {
     return res.status(400).json({ message: 'Invalid document type' })
@@ -199,6 +200,7 @@ const uploadProfileDocumentByUserId = async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'File is required' })
   }
+  validateUploadFile(req.file)
 
   const { docType } = req.body
   const profile = await ensureProfileForUserId(req.params.userId)
@@ -207,7 +209,7 @@ const uploadProfileDocumentByUserId = async (req, res) => {
     return res.status(404).json({ message: 'Business Advisor not found' })
   }
 
-  const fileUrl = documentUrl(req.file)
+  const fileUrl = await uploadToS3(req.file, 'ba-documents')
 
   if (!attachUploadedFile(profile, docType, fileUrl)) {
     return res.status(400).json({ message: 'Invalid document type' })

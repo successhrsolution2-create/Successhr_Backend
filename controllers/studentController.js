@@ -1,7 +1,7 @@
 const Student = require('../models/Student')
 const { emitToAdmin, emitToBA } = require('../socket')
-
-const documentUrl = (file) => `/uploads/${file.filename}`
+const { uploadToS3 } = require('../utils/s3Upload')
+const { validateUploadFile } = require('../utils/fileValidation')
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
@@ -196,13 +196,15 @@ const uploadStudentDocuments = async (req, res) => {
     return res.status(400).json({ message: 'At least one file is required' })
   }
 
-  files.forEach((file) => {
+  for (const file of files) {
+    validateUploadFile(file)
+    const fileUrl = await uploadToS3(file, 'student-documents')
     student.documents.push({
       fileName: file.originalname,
-      fileUrl: documentUrl(file),
+      fileUrl,
       uploadedAt: new Date()
     })
-  })
+  }
 
   await student.save()
   const savedStudent = await Student.findById(student._id).populate('submittedBy', 'name email')
