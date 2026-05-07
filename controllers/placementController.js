@@ -501,13 +501,6 @@ const updatePlacement = async (req, res) => {
 }
 
 const markPlacementPaid = async (req, res) => {
-  validatePlacementInput(req.body)
-  const placement = await Placement.findById(req.params.id)
-
-  if (!placement) {
-    return res.status(404).json({ message: 'Placement not found' })
-  }
-
   const earningStatus = req.body.earningStatus || req.body.commissionStatus
   const earningPaidDate = req.body.earningPaidDate || req.body.commissionPaidDate
 
@@ -515,11 +508,25 @@ const markPlacementPaid = async (req, res) => {
     return res.status(400).json({ message: "earningStatus must be 'paid'" })
   }
 
-  placement.earningStatus = 'paid'
-  placement.earningPaidDate = earningPaidDate ? new Date(earningPaidDate) : new Date()
-  await placement.save()
+  validateDateInput(earningPaidDate, 'Paid date')
 
-  const savedPlacement = await placementPopulate(Placement.findById(placement._id))
+  const savedPlacement = await placementPopulate(
+    Placement.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          earningStatus: 'paid',
+          earningPaidDate: earningPaidDate ? new Date(earningPaidDate) : new Date()
+        }
+      },
+      { new: true, runValidators: true }
+    )
+  )
+
+  if (!savedPlacement) {
+    return res.status(404).json({ message: 'Placement not found' })
+  }
+
   const normalizedSavedPlacement = normalizePlacementForResponse(savedPlacement)
 
   const paidPayload = {

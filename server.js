@@ -15,6 +15,7 @@ const studentRoutes = require('./routes/studentRoutes')
 const companyRoutes = require('./routes/companyRoutes')
 const placementRoutes = require('./routes/placementRoutes')
 const cmsRoutes = require('./routes/cms/cmsRoutes')
+const publicRoutes = require('./routes/publicRoutes')
 const { verifyToken } = require('./middleware/authMiddleware')
 const { requireRole } = require('./middleware/roleMiddleware')
 
@@ -33,6 +34,7 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.use('/api/auth', authRoutes)
+app.use('/api/public', publicRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/ba', baRoutes)
 app.use('/api/candidates', candidateRoutes)
@@ -74,7 +76,8 @@ app.use((error, _req, res, _next) => {
 
 const start = async () => {
   await connectDB()
-  setupSocket(server)
+  const io = setupSocket(server)
+  app.set('io', io)
 
   const port = process.env.PORT || 5000
   server.listen(port, () => {

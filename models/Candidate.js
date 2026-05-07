@@ -24,6 +24,7 @@ const candidateSchema = new mongoose.Schema(
     preferredJobLocation: String,
     education: String,
     totalExperience: Number,
+    currentCompany: String,
     careerSummary: String,
     currentSalary: String,
     expectedSalary: String,
@@ -49,6 +50,11 @@ const candidateSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true
+    },
+    source: {
+      type: String,
+      enum: ['admin_panel', 'public_form'],
+      default: 'admin_panel'
     },
     status: {
       type: String,

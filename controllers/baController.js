@@ -2,6 +2,7 @@ const BusinessAdvisor = require('../models/BusinessAdvisor')
 const User = require('../models/User')
 const { uploadToS3 } = require('../utils/s3Upload')
 const { validateUploadFile } = require('../utils/fileValidation')
+const Candidate = require('../models/Candidate')
 
 const isComplete = (profile) => {
   const personalComplete = Boolean(
@@ -139,13 +140,16 @@ const attachUploadedFile = (profile, docType, fileUrl) => {
 
 const getOwnProfile = async (req, res) => {
   const profile = await ensureProfile(req.user)
-  res.json(profile)
+  res.json({
+    ...profile.toObject(),
+    advisorCode: req.user.advisorCode || ''
+  })
 }
 
 const getProfileByUserId = async (req, res) => {
   const profile = await BusinessAdvisor.findOne({ userId: req.params.userId }).populate(
     'userId',
-    'name email isActive role'
+    'name email isActive role advisorCode'
   )
 
   if (!profile) {
@@ -174,7 +178,7 @@ const updateProfileByUserId = async (req, res) => {
   applyProfileBody(profile, req.body, user.email)
   await profile.save()
 
-  res.json(await BusinessAdvisor.findById(profile._id).populate('userId', 'name email isActive role createdAt'))
+  res.json(await BusinessAdvisor.findById(profile._id).populate('userId', 'name email isActive role createdAt advisorCode'))
 }
 
 const uploadProfileDocument = async (req, res) => {
@@ -225,7 +229,7 @@ const uploadProfileDocumentByUserId = async (req, res) => {
 
 const listAllProfiles = async (_req, res) => {
   const profiles = await BusinessAdvisor.find()
-    .populate('userId', 'name email isActive role createdAt')
+    .populate('userId', 'name email isActive role createdAt advisorCode')
     .sort({ createdAt: -1 })
 
   const existingUserIds = profiles.map((profile) => profile.userId?._id).filter(Boolean)
@@ -237,9 +241,19 @@ const listAllProfiles = async (_req, res) => {
   const createdProfiles = await Promise.all(usersWithoutProfiles.map((user) => ensureProfile(user)))
   const hydratedCreatedProfiles = await BusinessAdvisor.find({
     _id: { $in: createdProfiles.map((profile) => profile._id) }
-  }).populate('userId', 'name email isActive role createdAt')
+  }).populate('userId', 'name email isActive role createdAt advisorCode')
 
   res.json([...profiles, ...hydratedCreatedProfiles])
+}
+
+const getPublicFormCountByUserId = async (req, res) => {
+  const user = await User.findOne({ _id: req.params.userId, role: 'businessAdvisor' }).select('_id')
+  if (!user) {
+    return res.status(404).json({ message: 'Business Advisor not found' })
+  }
+
+  const count = await Candidate.countDocuments({ submittedBy: user._id, source: 'public_form' })
+  res.json({ count })
 }
 
 module.exports = {
@@ -249,5 +263,6 @@ module.exports = {
   updateProfileByUserId,
   uploadProfileDocument,
   uploadProfileDocumentByUserId,
-  listAllProfiles
+  listAllProfiles,
+  getPublicFormCountByUserId
 }

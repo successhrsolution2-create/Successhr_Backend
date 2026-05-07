@@ -103,6 +103,7 @@ const createCandidate = async (req, res) => {
   let candidate = await Candidate.create({
     ...req.body,
     submittedBy: req.user._id,
+    source: 'admin_panel',
     status: 'not_viewed',
     priorityOrder: 0
   })
@@ -139,7 +140,7 @@ const updateCandidate = async (req, res) => {
     return res.status(403).json({ message: 'You can only update your own references' })
   }
 
-  const blocked = ['submittedBy', '_id']
+  const blocked = ['submittedBy', '_id', 'source']
   if (req.user.role === 'businessAdvisor') {
     blocked.push('priorityOrder', 'status', 'adminNotes', 'selectionStatus')
   }

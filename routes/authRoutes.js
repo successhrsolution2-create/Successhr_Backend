@@ -13,8 +13,8 @@ const router = express.Router()
 
 router.post('/login', login)
 router.get('/me', verifyToken, me)
-router.get('/settings', verifyToken, requireRole('superAdmin'), getSuperAdminSettings)
-router.put('/settings/profile', verifyToken, requireRole('superAdmin'), updateSuperAdminProfile)
-router.put('/settings/password', verifyToken, requireRole('superAdmin'), updateSuperAdminPassword)
+router.get('/settings', verifyToken, requireRole('superAdmin', 'businessAdvisor'), getSuperAdminSettings)
+router.put('/settings/profile', verifyToken, requireRole('superAdmin', 'businessAdvisor'), updateSuperAdminProfile)
+router.put('/settings/password', verifyToken, requireRole('superAdmin', 'businessAdvisor'), updateSuperAdminPassword)
 
 module.exports = router

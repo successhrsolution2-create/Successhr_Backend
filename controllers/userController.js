@@ -1,6 +1,25 @@
 const bcrypt = require('bcryptjs')
 const User = require('../models/User')
 const BusinessAdvisor = require('../models/BusinessAdvisor')
+const generateAdvisorCode = require('../utils/generateAdvisorCode')
+
+const assignAdvisorCode = async (user) => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      user.advisorCode = await generateAdvisorCode()
+      await user.save()
+      return
+    } catch (error) {
+      if (error.code !== 11000 || !error.keyPattern?.advisorCode) {
+        throw error
+      }
+    }
+  }
+
+  const error = new Error('Could not generate a unique advisor code')
+  error.statusCode = 500
+  throw error
+}
 
 const isProfileComplete = (profile) => {
   const personalComplete = Boolean(
@@ -70,6 +89,8 @@ const createBusinessAdvisor = async (req, res) => {
     role: 'businessAdvisor',
     isActive: isActive === undefined ? true : Boolean(isActive)
   })
+
+  await assignAdvisorCode(user)
 
   const profile = await BusinessAdvisor.create({
     userId: user._id,

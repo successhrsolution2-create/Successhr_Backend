@@ -24,6 +24,14 @@ const userSchema = new mongoose.Schema(
       enum: ['superAdmin', 'businessAdvisor'],
       required: true
     },
+    advisorCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      lowercase: true,
+      trim: true,
+      match: /^[a-z0-9]+$/
+    },
     isActive: {
       type: Boolean,
       default: true
@@ -31,6 +39,8 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 )
+
+userSchema.index({ advisorCode: 1 }, { unique: true, sparse: true })
 
 userSchema.set('toJSON', {
   transform(_doc, ret) {
