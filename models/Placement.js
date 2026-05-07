@@ -16,9 +16,9 @@ const interviewModes = ['Online', 'Offline', 'Telephonic', 'Hybrid']
 
 const placementSchema = new mongoose.Schema(
   {
-    studentId: {
+    candidateId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Student',
+      ref: 'Candidate',
       required: true,
       unique: true
     },
@@ -79,6 +79,21 @@ const placementSchema = new mongoose.Schema(
   },
   { timestamps: true }
 )
+
+placementSchema.virtual('studentId')
+  .get(function getStudentId() {
+    return this.candidateId
+  })
+  .set(function setStudentId(value) {
+    this.candidateId = value
+  })
+
+placementSchema.pre('validate', function normalizeLegacyCandidateRef(next) {
+  if (!this.candidateId && this.studentId) {
+    this.candidateId = this.studentId
+  }
+  next()
+})
 
 placementSchema.pre('save', function updateEarning() {
   const salary = Number(this.offeredSalaryPM || 0)

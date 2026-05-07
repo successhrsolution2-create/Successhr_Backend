@@ -1,15 +1,19 @@
 const mongoose = require('mongoose')
 const Placement = require('../models/Placement')
-const Student = require('../models/Student')
+const Candidate = require('../models/Candidate')
 const Company = require('../models/Company')
 const User = require('../models/User')
 const { emitToAdmin, emitToBA } = require('../socket')
 
 const placementPopulate = (query) =>
   query
-    .populate('studentId', 'candidateName mobileNumber appliedFor submittedBy selectionStatus')
+    .populate('candidateId', 'candidateName mobileNumber appliedFor submittedBy selectionStatus')
     .populate('companyId', 'companyName jobRequirements.jobProfile')
     .populate('baId', 'name email')
+
+const candidateRefQuery = (candidateId) => ({
+  $or: [{ candidateId }, { studentId: candidateId }]
+})
 
 const parseLegacySalary = (value) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
@@ -158,6 +162,7 @@ const normalizePlacementForResponse = (placement) => {
 
   return {
     ...placement.toObject(),
+    studentId: placement.candidateId,
     offeredSalaryPM,
     earningPercent,
     earningAmount,
@@ -172,12 +177,15 @@ const normalizePlacementForResponse = (placement) => {
   }
 }
 
+const isLivePlacement = (placement) => Boolean(placement?.candidateId && placement?.companyId)
+
 const toMyPlacementPayload = (placement) => {
   const normalized = normalizePlacementForResponse(placement)
 
   return {
     _id: normalized._id,
-    studentName: normalized.studentId?.candidateName,
+    candidateName: normalized.candidateId?.candidateName,
+    studentName: normalized.candidateId?.candidateName,
     companyName: normalized.companyId?.companyName,
     jobProfile: normalized.jobProfile,
     offeredSalaryPM: normalized.offeredSalaryPM,
@@ -195,12 +203,17 @@ const toMyPlacementPayload = (placement) => {
     createdAt: normalized.createdAt,
     updatedAt: normalized.updatedAt,
 
-    // compatibility payload
+    candidate: {
+      _id: normalized.candidateId?._id,
+      candidateName: normalized.candidateId?.candidateName,
+      mobileNumber: normalized.candidateId?.mobileNumber,
+      appliedFor: normalized.candidateId?.appliedFor
+    },
     student: {
-      _id: normalized.studentId?._id,
-      candidateName: normalized.studentId?.candidateName,
-      mobileNumber: normalized.studentId?.mobileNumber,
-      appliedFor: normalized.studentId?.appliedFor
+      _id: normalized.candidateId?._id,
+      candidateName: normalized.candidateId?.candidateName,
+      mobileNumber: normalized.candidateId?.mobileNumber,
+      appliedFor: normalized.candidateId?.appliedFor
     },
     company: {
       _id: normalized.companyId?._id,
@@ -219,7 +232,8 @@ const toRoomPayload = (placement) => {
 
   return {
     placementId: normalized._id,
-    studentName: normalized.studentId?.candidateName,
+    candidateName: normalized.candidateId?.candidateName,
+    studentName: normalized.candidateId?.candidateName,
     companyName: normalized.companyId?.companyName,
     offeredSalaryPM: normalized.offeredSalaryPM,
     earningAmount: normalized.earningAmount,
@@ -232,7 +246,6 @@ const toRoomPayload = (placement) => {
     earningStatus: normalized.earningStatus,
     earningPaidDate: normalized.earningPaidDate,
 
-    // compatibility aliases
     commissionAmount: normalized.earningAmount,
     commissionStatus: normalized.earningStatus,
     commissionPaidDate: normalized.earningPaidDate
@@ -243,7 +256,8 @@ const toAdminPlacementEventPayload = (placement) => {
   const normalized = normalizePlacementForResponse(placement)
   return {
     placement: normalized,
-    studentName: normalized.studentId?.candidateName,
+    candidateName: normalized.candidateId?.candidateName,
+    studentName: normalized.candidateId?.candidateName,
     companyName: normalized.companyId?.companyName,
     baName: normalized.baId?.name
   }
@@ -271,7 +285,7 @@ const normalizePlacementInput = (body) => {
   const earningPaidDate = body.earningPaidDate || body.commissionPaidDate
 
   return {
-    studentId: body.studentId,
+    candidateId: body.candidateId || body.studentId,
     companyId: body.companyId,
     jobProfile: body.jobProfile,
     offeredSalaryPM: Number.isFinite(offeredSalaryPM) ? offeredSalaryPM : undefined,
@@ -290,8 +304,8 @@ const normalizePlacementInput = (body) => {
   }
 }
 
-const updateStudentSelectionStatus = async (studentId, selectionStatus) => {
-  await Student.findByIdAndUpdate(studentId, { $set: { selectionStatus } })
+const updateCandidateSelectionStatus = async (candidateId, selectionStatus) => {
+  await Candidate.findByIdAndUpdate(candidateId, { $set: { selectionStatus } })
 }
 
 const validateObjectId = (value, fieldName) => {
@@ -316,27 +330,27 @@ const parseQueryDate = (value, fieldName) => {
 const createPlacement = async (req, res) => {
   validatePlacementInput(req.body)
   const payload = normalizePlacementInput(req.body)
-  const { studentId, companyId } = payload
+  const { candidateId, companyId } = payload
 
-  if (!studentId || !companyId) {
-    return res.status(400).json({ message: 'studentId and companyId are required' })
+  if (!candidateId || !companyId) {
+    return res.status(400).json({ message: 'candidateId and companyId are required' })
   }
 
-  validateObjectId(studentId, 'studentId')
+  validateObjectId(candidateId, 'candidateId')
   validateObjectId(companyId, 'companyId')
 
-  const [student, company, existing] = await Promise.all([
-    Student.findById(studentId).populate('submittedBy', 'name email'),
+  const [candidate, company, existing] = await Promise.all([
+    Candidate.findById(candidateId).populate('submittedBy', 'name email'),
     Company.findById(companyId),
-    Placement.findOne({ studentId })
+    Placement.findOne(candidateRefQuery(candidateId))
   ])
 
-  if (!student) {
-    return res.status(404).json({ message: 'Student reference not found' })
+  if (!candidate) {
+    return res.status(404).json({ message: 'Candidate reference not found' })
   }
 
-  if (!student.submittedBy) {
-    return res.status(400).json({ message: 'Student reference has no submitting advisor linked' })
+  if (!candidate.submittedBy) {
+    return res.status(400).json({ message: 'Candidate reference has no submitting advisor linked' })
   }
 
   if (!company) {
@@ -344,15 +358,15 @@ const createPlacement = async (req, res) => {
   }
 
   if (existing) {
-    return res.status(409).json({ message: 'Placement already exists for this student' })
+    return res.status(409).json({ message: 'Placement already exists for this candidate' })
   }
 
   const placement = await Placement.create({
     ...payload,
-    baId: student.submittedBy?._id || student.submittedBy
+    baId: candidate.submittedBy?._id || candidate.submittedBy
   })
 
-  await updateStudentSelectionStatus(placement.studentId, placement.selectionStatus)
+  await updateCandidateSelectionStatus(placement.candidateId, placement.selectionStatus)
 
   const savedPlacement = await placementPopulate(Placement.findById(placement._id))
   const normalizedSavedPlacement = normalizePlacementForResponse(savedPlacement)
@@ -366,7 +380,17 @@ const createPlacement = async (req, res) => {
 
 const getPlacements = async (req, res) => {
   const query = {}
-  const { baId, earningStatus, commissionStatus, selectionStatus, processStage, studentId, dateFrom, dateTo } = req.query
+  const {
+    baId,
+    earningStatus,
+    commissionStatus,
+    selectionStatus,
+    processStage,
+    candidateId,
+    studentId,
+    dateFrom,
+    dateTo
+  } = req.query
 
   if (baId) {
     validateObjectId(baId, 'baId')
@@ -375,9 +399,10 @@ const getPlacements = async (req, res) => {
   if (earningStatus || commissionStatus) query.earningStatus = earningStatus || commissionStatus
   if (selectionStatus) query.selectionStatus = selectionStatus
   if (processStage) query.processStage = processStage
-  if (studentId) {
-    validateObjectId(studentId, 'studentId')
-    query.studentId = studentId
+  const resolvedCandidateId = candidateId || studentId
+  if (resolvedCandidateId) {
+    validateObjectId(resolvedCandidateId, 'candidateId')
+    Object.assign(query, candidateRefQuery(resolvedCandidateId))
   }
 
   if (dateFrom || dateTo) {
@@ -389,12 +414,12 @@ const getPlacements = async (req, res) => {
   }
 
   const placements = await placementPopulate(Placement.find(query)).sort({ createdAt: -1 })
-  res.json(placements.map(normalizePlacementForResponse))
+  res.json(placements.filter(isLivePlacement).map(normalizePlacementForResponse))
 }
 
 const getMyPlacements = async (req, res) => {
   const placements = await placementPopulate(Placement.find({ baId: req.user._id })).sort({ createdAt: -1 })
-  res.json(placements.map(toMyPlacementPayload))
+  res.json(placements.filter(isLivePlacement).map(toMyPlacementPayload))
 }
 
 const getPlacementById = async (req, res) => {
@@ -464,7 +489,7 @@ const updatePlacement = async (req, res) => {
   }
 
   await placement.save()
-  await updateStudentSelectionStatus(placement.studentId, placement.selectionStatus)
+  await updateCandidateSelectionStatus(placement.candidateId, placement.selectionStatus)
 
   const savedPlacement = await placementPopulate(Placement.findById(placement._id))
   const normalizedSavedPlacement = normalizePlacementForResponse(savedPlacement)
@@ -499,7 +524,8 @@ const markPlacementPaid = async (req, res) => {
 
   const paidPayload = {
     placementId: normalizedSavedPlacement._id,
-    studentName: normalizedSavedPlacement.studentId?.candidateName,
+    candidateName: normalizedSavedPlacement.candidateId?.candidateName,
+    studentName: normalizedSavedPlacement.candidateId?.candidateName,
     earningAmount: normalizedSavedPlacement.earningAmount,
     paidDate: normalizedSavedPlacement.earningPaidDate,
 
@@ -518,43 +544,44 @@ const markPlacementPaid = async (req, res) => {
 }
 
 const getCommissionSummary = async (_req, res) => {
-  const rows = await Placement.aggregate([
-    {
-      $group: {
-        _id: '$baId',
-        totalPlacements: { $sum: 1 },
-        totalEarnings: { $sum: '$earningAmount' },
-        paidAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$earningStatus', 'paid'] }, '$earningAmount', 0]
-          }
-        },
-        pendingAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$earningStatus', 'pending'] }, '$earningAmount', 0]
-          }
-        }
-      }
-    },
-    { $sort: { totalEarnings: -1 } }
-  ])
+  const placements = await placementPopulate(Placement.find({}))
+  const grouped = new Map()
 
-  const baIds = rows.map((row) => row._id)
-  const baUsers = await User.find({ _id: { $in: baIds } }, 'name')
-  const baNameById = new Map(baUsers.map((user) => [user._id.toString(), user.name]))
+  placements.filter(isLivePlacement).forEach((placement) => {
+    const normalized = normalizePlacementForResponse(placement)
+    const baId = placement.baId?._id || placement.baId
+    if (!baId) return
+
+    const key = baId.toString()
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        baId,
+        baName: placement.baId?.name || 'Business Advisor',
+        totalPlacements: 0,
+        totalEarnings: 0,
+        paidAmount: 0,
+        pendingAmount: 0
+      })
+    }
+
+    const row = grouped.get(key)
+    const amount = Number(normalized.earningAmount || 0)
+    row.totalPlacements += 1
+    row.totalEarnings += amount
+    if (normalized.earningStatus === 'paid') {
+      row.paidAmount += amount
+    } else {
+      row.pendingAmount += amount
+    }
+  })
 
   res.json(
-    rows.map((row) => ({
-      baId: row._id,
-      baName: baNameById.get(row._id.toString()) || 'Business Advisor',
-      totalPlacements: row.totalPlacements,
-      totalEarnings: Number(row.totalEarnings || 0),
-      paidAmount: Number(row.paidAmount || 0),
-      pendingAmount: Number(row.pendingAmount || 0),
-
-      // compatibility alias
-      totalCommission: Number(row.totalEarnings || 0)
-    }))
+    [...grouped.values()]
+      .sort((a, b) => b.totalEarnings - a.totalEarnings)
+      .map((row) => ({
+        ...row,
+        totalCommission: row.totalEarnings
+      }))
   )
 }
 
@@ -562,41 +589,36 @@ const getBaCommissionSummary = async (req, res) => {
   validateObjectId(req.params.baId, 'baId')
   const baId = new mongoose.Types.ObjectId(req.params.baId)
 
-  const [summaryRow] = await Placement.aggregate([
-    { $match: { baId } },
-    {
-      $group: {
-        _id: '$baId',
-        totalPlacements: { $sum: 1 },
-        totalEarnings: { $sum: '$earningAmount' },
-        paidAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$earningStatus', 'paid'] }, '$earningAmount', 0]
-          }
-        },
-        pendingAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$earningStatus', 'pending'] }, '$earningAmount', 0]
-          }
-        }
-      }
-    }
-  ])
-
   const placements = await placementPopulate(Placement.find({ baId })).sort({ createdAt: -1 })
+  const livePlacements = placements.filter(isLivePlacement)
   const ba = await User.findById(req.params.baId, 'name email')
+  const totals = livePlacements.reduce(
+    (acc, placement) => {
+      const normalized = normalizePlacementForResponse(placement)
+      const amount = Number(normalized.earningAmount || 0)
+      acc.totalPlacements += 1
+      acc.totalEarnings += amount
+      if (normalized.earningStatus === 'paid') {
+        acc.paidAmount += amount
+      } else {
+        acc.pendingAmount += amount
+      }
+      return acc
+    },
+    { totalPlacements: 0, totalEarnings: 0, paidAmount: 0, pendingAmount: 0 }
+  )
 
   res.json({
     baId: req.params.baId,
     baName: ba?.name || 'Business Advisor',
-    totalPlacements: summaryRow?.totalPlacements || 0,
-    totalEarnings: Number(summaryRow?.totalEarnings || 0),
-    paidAmount: Number(summaryRow?.paidAmount || 0),
-    pendingAmount: Number(summaryRow?.pendingAmount || 0),
-    placements: placements.map(normalizePlacementForResponse),
+    totalPlacements: totals.totalPlacements,
+    totalEarnings: totals.totalEarnings,
+    paidAmount: totals.paidAmount,
+    pendingAmount: totals.pendingAmount,
+    placements: livePlacements.map(normalizePlacementForResponse),
 
     // compatibility alias
-    totalCommission: Number(summaryRow?.totalEarnings || 0)
+    totalCommission: totals.totalEarnings
   })
 }
 
@@ -610,3 +632,4 @@ module.exports = {
   getCommissionSummary,
   getBaCommissionSummary
 }
+

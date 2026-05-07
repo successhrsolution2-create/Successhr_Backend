@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "migrate:atlas": "node scripts/migrate-local-to-atlas.js"
+    "migrate:atlas": "node scripts/migrate-local-to-atlas.js",
+    "migrate:candidates": "node scripts/migrate-candidates.js"
   },
   "keywords": [],
   "author": "",

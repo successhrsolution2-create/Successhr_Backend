@@ -1,4 +1,5 @@
 const Company = require('../models/Company')
+const Placement = require('../models/Placement')
 const { emitToAdmin, emitToBA } = require('../socket')
 
 const populateCompany = (query) => query.populate('submittedBy', 'name email')
@@ -146,10 +147,24 @@ const deleteCompany = async (req, res) => {
 
   const ownerId = ownerUserId(company)
   const deletedId = company._id.toString()
+  const linkedPlacements = await Placement.find({ companyId: company._id }).select('_id baId')
+
+  if (linkedPlacements.length) {
+    await Placement.deleteMany({ _id: { $in: linkedPlacements.map((placement) => placement._id) } })
+  }
+
   await company.deleteOne()
 
   emitToAdmin('company_deleted', { id: deletedId })
   emitToBA(ownerId, 'company_deleted', { id: deletedId })
+  linkedPlacements.forEach((placement) => {
+    const payload = {
+      id: placement._id.toString(),
+      companyId: deletedId
+    }
+    emitToAdmin('placement_deleted', payload)
+    emitToBA(placement.baId, 'placement_deleted', payload)
+  })
 
   res.json({ message: 'Company reference deleted' })
 }
