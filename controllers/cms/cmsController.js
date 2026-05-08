@@ -1,4 +1,5 @@
 const CmsCandidate = require('../../models/cms/CmsCandidate')
+const CmsCompany = require('../../models/cms/CmsCompany')
 const CmsInterview = require('../../models/cms/CmsInterview')
 const CmsRemark = require('../../models/cms/CmsRemark')
 
@@ -52,6 +53,50 @@ const ensureRemark = async (candidateId) => {
   return remark
 }
 
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const toDigits = (value) => String(value || '').replace(/\D/g, '')
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+
+const normalizeCompanyIdentity = (payload) => {
+  const normalizedMobile = toDigits(payload.mobileNo)
+  if (payload.mobileNo && normalizedMobile.length !== 10) {
+    const error = new Error('Mobile number must be 10 digits')
+    error.statusCode = 400
+    throw error
+  }
+
+  const normalizedEmail = normalizeEmail(payload.emailId)
+  if (normalizedEmail && !emailRegex.test(normalizedEmail)) {
+    const error = new Error('Enter a valid email')
+    error.statusCode = 400
+    throw error
+  }
+
+  payload.mobileNo = normalizedMobile || undefined
+  payload.emailId = normalizedEmail || undefined
+}
+
+const ensureUniqueCmsCompanyIdentity = async (payload, excludeId) => {
+  const checks = [
+    { field: 'mobileNo', label: 'mobile number', value: payload.mobileNo },
+    { field: 'emailId', label: 'email', value: payload.emailId }
+  ].filter((item) => item.value)
+
+  for (const check of checks) {
+    const query = { [check.field]: check.value }
+    if (excludeId) {
+      query._id = { $ne: excludeId }
+    }
+
+    const existing = await CmsCompany.findOne(query).select('_id')
+    if (existing) {
+      const error = new Error(`A company with this ${check.label} already exists`)
+      error.statusCode = 409
+      throw error
+    }
+  }
+}
+
 const createCandidate = async (req, res) => {
   const candidate = await CmsCandidate.create({
     ...req.body,
@@ -59,6 +104,18 @@ const createCandidate = async (req, res) => {
   })
   await ensureRemark(candidate._id)
   res.status(201).json(candidate)
+}
+
+const createCompany = async (req, res) => {
+  normalizeCompanyIdentity(req.body)
+  await ensureUniqueCmsCompanyIdentity(req.body)
+
+  const company = await CmsCompany.create({
+    ...req.body,
+    createdBy: req.user._id
+  })
+
+  res.status(201).json(company)
 }
 
 const listCandidates = async (req, res) => {
@@ -80,6 +137,28 @@ const listCandidates = async (req, res) => {
   res.json(candidates)
 }
 
+const listCompanies = async (req, res) => {
+  const { search = '' } = req.query
+
+  const query = {}
+  if (search.trim()) {
+    const regex = new RegExp(search.trim(), 'i')
+    query.$or = [
+      { companyName: regex },
+      { companyAddress: regex },
+      { contactPersonName: regex },
+      { contactPersonDesignation: regex },
+      { mobileNo: regex },
+      { emailId: regex },
+      { 'jobRequirements.jobProfile': regex },
+      { 'jobRequirements.jobLocation': regex }
+    ]
+  }
+
+  const companies = await CmsCompany.find(query).sort({ createdAt: -1 })
+  res.json(companies)
+}
+
 const getCandidateById = async (req, res) => {
   const candidate = await CmsCandidate.findById(req.params.id).populate('createdBy', 'name email')
 
@@ -93,6 +172,16 @@ const getCandidateById = async (req, res) => {
   ])
 
   res.json({ candidate, interviews, remark })
+}
+
+const getCompanyById = async (req, res) => {
+  const company = await CmsCompany.findById(req.params.id).populate('createdBy', 'name email')
+
+  if (!company) {
+    return res.status(404).json({ message: 'Company not found' })
+  }
+
+  res.json({ company })
 }
 
 const updateCandidate = async (req, res) => {
@@ -112,6 +201,26 @@ const updateCandidate = async (req, res) => {
   res.json(candidate)
 }
 
+const updateCompany = async (req, res) => {
+  const company = await CmsCompany.findById(req.params.id)
+
+  if (!company) {
+    return res.status(404).json({ message: 'Company not found' })
+  }
+
+  Object.entries(req.body || {}).forEach(([key, value]) => {
+    if (key !== '_id' && key !== 'createdBy') {
+      company[key] = value
+    }
+  })
+
+  normalizeCompanyIdentity(company)
+  await ensureUniqueCmsCompanyIdentity(company, company._id)
+
+  await company.save()
+  res.json(company)
+}
+
 const deleteCandidate = async (req, res) => {
   const candidate = await CmsCandidate.findById(req.params.id)
 
@@ -126,6 +235,17 @@ const deleteCandidate = async (req, res) => {
   ])
 
   res.json({ message: 'Candidate deleted' })
+}
+
+const deleteCompany = async (req, res) => {
+  const company = await CmsCompany.findById(req.params.id)
+
+  if (!company) {
+    return res.status(404).json({ message: 'Company not found' })
+  }
+
+  await company.deleteOne()
+  res.json({ message: 'Company deleted' })
 }
 
 const addInterview = async (req, res) => {
@@ -254,10 +374,15 @@ const updateRemarks = async (req, res) => {
 
 module.exports = {
   createCandidate,
+  createCompany,
   listCandidates,
+  listCompanies,
   getCandidateById,
+  getCompanyById,
   updateCandidate,
+  updateCompany,
   deleteCandidate,
+  deleteCompany,
   addInterview,
   listInterviews,
   updateInterview,

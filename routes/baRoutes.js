@@ -15,7 +15,7 @@ const upload = require('../middleware/uploadMiddleware')
 
 const router = express.Router()
 
-router.get('/all', verifyToken, requireRole('superAdmin'), listAllProfiles)
+router.get('/all', verifyToken, requireRole('superAdmin', 'candidateAdmin'), listAllProfiles)
 router.get('/profile', verifyToken, requireRole('businessAdvisor'), getOwnProfile)
 router.get('/profile/:userId', verifyToken, requireRole('superAdmin'), getProfileByUserId)
 router.get('/:userId/public-form-count', verifyToken, requireRole('superAdmin'), getPublicFormCountByUserId)

@@ -21,7 +21,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['superAdmin', 'businessAdvisor'],
+      enum: ['superAdmin', 'businessAdvisor', 'candidateAdmin'],
       required: true
     },
     advisorCode: {

@@ -1,6 +1,5 @@
 const express = require('express')
 const rateLimit = require('express-rate-limit')
-const upload = require('../middleware/uploadMiddleware')
 const { getAdvisorByCode, submitApplication } = require('../controllers/publicController')
 
 const router = express.Router()
@@ -18,6 +17,7 @@ const submitLimiter = rateLimit({
 })
 
 router.get('/advisor/:code', codeLookupLimiter, getAdvisorByCode)
-router.post('/apply/:code', submitLimiter, upload.array('documents', 10), submitApplication)
+router.post('/apply', submitLimiter, submitApplication)
+router.post('/apply/:code', submitLimiter, submitApplication)
 
 module.exports = router

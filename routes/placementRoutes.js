@@ -17,19 +17,19 @@ const router = express.Router()
 router.use(verifyToken)
 
 router.get('/my', requireRole('businessAdvisor'), getMyPlacements)
-router.get('/summary', requireRole('superAdmin'), getCommissionSummary)
-router.get('/ba/:baId/summary', requireRole('superAdmin'), getBaCommissionSummary)
+router.get('/summary', requireRole('superAdmin', 'candidateAdmin'), getCommissionSummary)
+router.get('/ba/:baId/summary', requireRole('superAdmin', 'candidateAdmin'), getBaCommissionSummary)
 
 router
   .route('/')
-  .post(requireRole('superAdmin'), createPlacement)
-  .get(requireRole('superAdmin'), getPlacements)
+  .post(requireRole('superAdmin', 'candidateAdmin'), createPlacement)
+  .get(requireRole('superAdmin', 'candidateAdmin'), getPlacements)
 
 router
   .route('/:id')
   .get(getPlacementById)
-  .put(requireRole('superAdmin'), updatePlacement)
+  .put(requireRole('superAdmin', 'candidateAdmin'), updatePlacement)
 
-router.patch('/:id/pay', requireRole('superAdmin'), markPlacementPaid)
+router.patch('/:id/pay', requireRole('superAdmin', 'candidateAdmin'), markPlacementPaid)
 
 module.exports = router

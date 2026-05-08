@@ -41,7 +41,7 @@ app.use('/api/candidates', candidateRoutes)
 app.use('/api/students', studentRoutes)
 app.use('/api/companies', companyRoutes)
 app.use('/api/placements', placementRoutes)
-app.use('/api/cms', verifyToken, requireRole('superAdmin'), cmsRoutes)
+app.use('/api/cms', verifyToken, requireRole('superAdmin', 'candidateAdmin'), cmsRoutes)
 
 app.use((req, res) => {
   res.status(404).json({ message: `Route not found: ${req.method} ${req.originalUrl}` })
