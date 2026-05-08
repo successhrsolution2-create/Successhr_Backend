@@ -43,14 +43,35 @@ const uploadToS3 = async (file, folder = 'uploads') => {
 
   const key = `${folder}/${Date.now()}-${Math.round(Math.random() * 1e9)}-${sanitizeName(file.originalname)}`
 
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: process.env.AWS_S3_BUCKET,
-      Key: key,
-      Body: file.buffer,
-      ContentType: file.mimetype
-    })
-  )
+  try {
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: process.env.AWS_S3_BUCKET,
+        Key: key,
+        Body: file.buffer,
+        ContentType: file.mimetype
+      })
+    )
+  } catch (err) {
+    const message = String(err?.message || err || 'S3 upload failed')
+    const name = String(err?.name || '')
+
+    if (
+      name.toLowerCase().includes('credentials') ||
+      message.toLowerCase().includes('credential') ||
+      message.toLowerCase().includes('could not load credentials')
+    ) {
+      const error = new Error(
+        'S3 upload failed: AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in backend/.env (or configure an AWS profile/IAM role).'
+      )
+      error.statusCode = 500
+      throw error
+    }
+
+    const error = new Error(`S3 upload failed: ${message}`)
+    error.statusCode = err?.$metadata?.httpStatusCode || 500
+    throw error
+  }
 
   return `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`
 }
