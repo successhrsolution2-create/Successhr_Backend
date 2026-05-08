@@ -3,6 +3,7 @@ const User = require('../models/User')
 const { uploadToS3 } = require('../utils/s3Upload')
 const { validateUploadFile } = require('../utils/fileValidation')
 const Candidate = require('../models/Candidate')
+const generateAdvisorCode = require('../utils/generateAdvisorCode')
 
 const isComplete = (profile) => {
   const personalComplete = Boolean(
@@ -46,6 +47,20 @@ const ensureProfile = async (user) => {
       fullName: user.name,
       email: user.email
     })
+  }
+
+  if (user.role === 'businessAdvisor' && !user.advisorCode) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        user.advisorCode = await generateAdvisorCode()
+        await user.save()
+        break
+      } catch (error) {
+        if (error.code !== 11000 || !error.keyPattern?.advisorCode) {
+          throw error
+        }
+      }
+    }
   }
 
   return profile
