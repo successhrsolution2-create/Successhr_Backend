@@ -10,8 +10,15 @@ const remarkFlag = {
 
 const cmsCandidateSchema = new mongoose.Schema(
   {
+    candidateCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true
+    },
     fullName: { type: String, required: true, trim: true },
     mobileNumber: { type: String, required: true, trim: true },
+    aadhaarNo: String,
     whatsappNo: String,
     emailId: String,
     dateOfBirth: Date,
@@ -22,6 +29,7 @@ const cmsCandidateSchema = new mongoose.Schema(
     specialization: String,
     totalExperience: Number,
     currentCompany: String,
+    careerSummary: String,
     currentDesignation: String,
     currentSalary: String,
     expectedSalary: String,
@@ -30,7 +38,35 @@ const cmsCandidateSchema = new mongoose.Schema(
     preferredLocation: String,
     marriageStatus: { type: String, enum: ['Married', 'Unmarried', 'Single'] },
     languagesKnown: [String],
+    appliedFor: String,
+    interestedDepartment: String,
+    preferredIndustry: String,
+    preferredJobLocation: String,
+    availabilityForInterview: String,
+    reasonForJobChange: String,
+    currentJobLocation: String,
+    source: {
+      type: String,
+      enum: ['admin_panel', 'public_form'],
+      default: 'admin_panel'
+    },
+    intakeType: {
+      type: String,
+      enum: ['walkin', 'advisor', 'admin'],
+      default: 'admin'
+    },
+    advisor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    advisorCode: String,
+    referenceName: String,
     successRemarks: {
+      selected: remarkFlag,
+      joined: remarkFlag,
+      notSelected: remarkFlag,
+      rejected: remarkFlag,
       resumeReady: remarkFlag,
       educationVerified: remarkFlag,
       experienceVerified: remarkFlag,

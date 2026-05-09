@@ -4,6 +4,7 @@ const { uploadToS3 } = require('../utils/s3Upload')
 const { validateUploadFile } = require('../utils/fileValidation')
 const Candidate = require('../models/Candidate')
 const generateAdvisorCode = require('../utils/generateAdvisorCode')
+const { invalidateCache } = require('../src/utils/invalidateCache')
 
 const isComplete = (profile) => {
   const personalComplete = Boolean(
@@ -179,6 +180,8 @@ const updateOwnProfile = async (req, res) => {
   applyProfileBody(profile, req.body, req.user.email)
   await profile.save()
 
+  invalidateCache('/api/ba/all').catch(() => {})
+  invalidateCache('/api/ba/profile').catch(() => {})
   res.json(profile)
 }
 
@@ -193,6 +196,9 @@ const updateProfileByUserId = async (req, res) => {
   applyProfileBody(profile, req.body, user.email)
   await profile.save()
 
+  invalidateCache('/api/ba/all').catch(() => {})
+  invalidateCache(`/api/ba/profile/${req.params.userId}`).catch(() => {})
+  invalidateCache(`/api/ba/${req.params.userId}/public-form-count`).catch(() => {})
   res.json(await BusinessAdvisor.findById(profile._id).populate('userId', 'name email isActive role createdAt advisorCode'))
 }
 
@@ -212,6 +218,8 @@ const uploadProfileDocument = async (req, res) => {
 
   await profile.save()
 
+  invalidateCache('/api/ba/all').catch(() => {})
+  invalidateCache('/api/ba/profile').catch(() => {})
   res.json({ profile, fileUrl })
 }
 
@@ -236,6 +244,8 @@ const uploadProfileDocumentByUserId = async (req, res) => {
 
   await profile.save()
 
+  invalidateCache('/api/ba/all').catch(() => {})
+  invalidateCache(`/api/ba/profile/${req.params.userId}`).catch(() => {})
   res.json({
     profile: await BusinessAdvisor.findById(profile._id).populate('userId', 'name email isActive role createdAt'),
     fileUrl

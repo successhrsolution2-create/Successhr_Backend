@@ -1,6 +1,7 @@
 const Company = require('../models/Company')
 const Placement = require('../models/Placement')
 const { emitToAdmin, emitToBA } = require('../socket')
+const { invalidateCache } = require('../src/utils/invalidateCache')
 
 const populateCompany = (query) => query.populate('submittedBy', 'name email')
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -80,6 +81,7 @@ const createCompany = async (req, res) => {
   emitToAdmin('new_company', company)
   emitToBA(ownerUserId(company), 'company_updated', company)
 
+  invalidateCache('/api/companies').catch(() => {})
   res.status(201).json(company)
 }
 
@@ -135,6 +137,8 @@ const updateCompany = async (req, res) => {
   emitToAdmin('company_updated', savedCompany)
   emitToBA(ownerUserId(savedCompany), 'company_updated', savedCompany)
 
+  invalidateCache('/api/companies').catch(() => {})
+  invalidateCache(`/api/companies/${req.params.id}`).catch(() => {})
   res.json(savedCompany)
 }
 
@@ -166,6 +170,10 @@ const deleteCompany = async (req, res) => {
     emitToBA(placement.baId, 'placement_deleted', payload)
   })
 
+  invalidateCache('/api/companies').catch(() => {})
+  invalidateCache(`/api/companies/${req.params.id}`).catch(() => {})
+  invalidateCache('/api/placements').catch(() => {})
+  invalidateCache('/api/placements/summary').catch(() => {})
   res.json({ message: 'Company reference deleted' })
 }
 
@@ -208,6 +216,8 @@ const updateCompanyStatus = async (req, res) => {
   emitToAdmin('company_updated', savedCompany)
   emitToBA(ownerUserId(savedCompany), 'company_updated', savedCompany)
 
+  invalidateCache('/api/companies').catch(() => {})
+  invalidateCache(`/api/companies/${req.params.id}`).catch(() => {})
   res.json(savedCompany)
 }
 
@@ -228,6 +238,7 @@ const reorderCompanies = async (req, res) => {
   )
 
   emitToAdmin('reordered', { type: 'company', orderedIds })
+  invalidateCache('/api/companies').catch(() => {})
   res.json({ orderedIds })
 }
 

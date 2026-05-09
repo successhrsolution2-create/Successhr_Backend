@@ -1,8 +1,14 @@
 const Candidate = require('../models/Candidate')
 const Placement = require('../models/Placement')
+const CmsCandidate = require('../models/cms/CmsCandidate')
+const CmsRemark = require('../models/cms/CmsRemark')
+const BusinessAdvisor = require('../models/BusinessAdvisor')
+const { nextCandidateCode } = require('../utils/cmsCandidateCode')
+const { syncCmsFromCandidate } = require('../utils/candidateStatusSync')
 const { emitToAdmin, emitToBA } = require('../socket')
 const { uploadToS3 } = require('../utils/s3Upload')
 const { validateUploadFile } = require('../utils/fileValidation')
+const { invalidateCache } = require('../src/utils/invalidateCache')
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -10,6 +16,35 @@ const emitCandidateEvent = (adminEvent, baEvent, baId, payload) => {
   emitToAdmin(adminEvent, payload)
   emitToBA(baId, baEvent, payload)
 }
+
+const remarkKeys = [
+  'documentsSubmitted',
+  'offerLetterReceived',
+  'appointmentLetterGiven',
+  'joiningDateConfirmed',
+  'joiningCompleted',
+  'pfEnrolled',
+  'esicEnrolled',
+  'backgroundCheckDone',
+  'trainingCompleted',
+  'idCardIssued',
+  'uniformProvided',
+  'salaryAccountOpened',
+  'firstSalaryReceived',
+  'probationCompleted',
+  'permanentEmployment',
+  'exitFormalitiesDone',
+  'noDuesCertificate',
+  'experienceLetterGiven',
+  'relievingLetterGiven',
+  'feedbackCollected'
+]
+
+const defaultCheckboxes = () =>
+  remarkKeys.reduce((acc, key) => {
+    acc[key] = { checked: false, updatedAt: null }
+    return acc
+  }, {})
 
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
@@ -85,6 +120,62 @@ const canAccess = (req, candidate) => {
 
 const ownerUserId = (candidate) => candidate?.submittedBy?._id || candidate?.submittedBy
 
+const resolveAdvisorDisplayName = async (advisor) => {
+  const directName = String(advisor?.name || '').trim()
+  if (directName) return directName
+
+  const profile = await BusinessAdvisor.findOne({ userId: advisor?._id }).select('fullName').lean()
+  const profileName = String(profile?.fullName || '').trim()
+  if (profileName) return profileName
+
+  return advisor?.email || advisor?.advisorCode || null
+}
+
+const mirrorCandidateToCms = async (candidate, advisor) => {
+  const advisorName = await resolveAdvisorDisplayName(advisor)
+  const candidateCode = await nextCandidateCode(new Date())
+  const cmsCandidate = await CmsCandidate.create({
+    candidateCode,
+    fullName: candidate.candidateName,
+    mobileNumber: candidate.mobileNumber,
+    aadhaarNo: candidate.aadhaarNo,
+    whatsappNo: candidate.whatsappNo,
+    emailId: candidate.emailId,
+    education: candidate.education,
+    specialization: candidate.interestedDepartment,
+    totalExperience: candidate.totalExperience,
+    currentCompany: candidate.currentCompany,
+    careerSummary: candidate.careerSummary,
+    currentDesignation: candidate.appliedFor || undefined,
+    currentSalary: candidate.currentSalary,
+    expectedSalary: candidate.expectedSalary,
+    noticePeriod: candidate.noticePeriod === undefined ? undefined : String(candidate.noticePeriod),
+    preferredLocation: candidate.preferredJobLocation,
+    marriageStatus: candidate.marriageStatus,
+    appliedFor: candidate.appliedFor,
+    interestedDepartment: candidate.interestedDepartment,
+    preferredIndustry: candidate.preferredIndustry,
+    preferredJobLocation: candidate.preferredJobLocation,
+    availabilityForInterview: candidate.availabilityForInterview,
+    reasonForJobChange: candidate.reasonForJobChange,
+    currentJobLocation: candidate.currentJobLocation,
+    source: candidate.source || 'admin_panel',
+    intakeType: 'advisor',
+    advisor: advisor?._id || candidate.submittedBy,
+    advisorCode: advisor?.advisorCode,
+    referenceName: advisorName || candidate.reference_name || null,
+    createdBy: advisor?._id || candidate.submittedBy
+  })
+
+  await CmsRemark.updateOne(
+    { candidateId: cmsCandidate._id },
+    { $setOnInsert: { checkboxes: defaultCheckboxes() } },
+    { upsert: true }
+  )
+
+  return cmsCandidate
+}
+
 const getCandidates = async (req, res) => {
   const query = req.user.role === 'superAdmin' ? {} : { submittedBy: req.user._id }
   const candidates = await Candidate.find(query)
@@ -100,18 +191,25 @@ const createCandidate = async (req, res) => {
 
   await Candidate.updateMany({ status: 'not_viewed' }, { $inc: { priorityOrder: 1 } })
 
+  const advisorName = await resolveAdvisorDisplayName(req.user)
+
   let candidate = await Candidate.create({
     ...req.body,
     submittedBy: req.user._id,
+    reference_type: 'ba',
+    reference_name: advisorName,
+    business_advisor_id: req.user._id,
     source: 'admin_panel',
     status: 'not_viewed',
     priorityOrder: 0
   })
 
   candidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
+  await mirrorCandidateToCms(candidate, req.user)
   emitCandidateEvent('new_candidate', 'candidate_updated', ownerUserId(candidate), candidate)
   emitCandidateEvent('new_student', 'student_updated', ownerUserId(candidate), candidate)
 
+  invalidateCache('/api/candidates').catch(() => {})
   res.status(201).json(candidate)
 }
 
@@ -163,10 +261,13 @@ const updateCandidate = async (req, res) => {
 
   await candidate.save()
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
+  await syncCmsFromCandidate(savedCandidate)
 
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
+  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
   res.json(savedCandidate)
 }
 
@@ -200,6 +301,10 @@ const deleteCandidate = async (req, res) => {
     emitToBA(placement.baId, 'placement_deleted', { ...payload, studentId: deletedId })
   })
 
+  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
+  invalidateCache('/api/placements').catch(() => {})
+  invalidateCache('/api/placements/summary').catch(() => {})
   res.json({ message: 'Candidate reference deleted' })
 }
 
@@ -236,6 +341,8 @@ const uploadCandidateDocuments = async (req, res) => {
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
+  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
   res.json(savedCandidate)
 }
 
@@ -258,6 +365,8 @@ const deleteCandidateDocument = async (req, res) => {
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
+  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
   res.json(savedCandidate)
 }
 
@@ -291,6 +400,7 @@ const updateCandidateStatus = async (req, res) => {
   await candidate.save()
 
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
+  await syncCmsFromCandidate(savedCandidate)
 
   emitToAdmin('status_updated', {
     type: 'candidate',
@@ -300,6 +410,8 @@ const updateCandidateStatus = async (req, res) => {
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
+  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
   res.json(savedCandidate)
 }
 
@@ -320,6 +432,7 @@ const reorderCandidates = async (req, res) => {
   )
 
   emitToAdmin('reordered', { type: 'candidate', orderedIds })
+  invalidateCache('/api/candidates').catch(() => {})
   res.json({ orderedIds })
 }
 

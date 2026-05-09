@@ -2,6 +2,8 @@ const CmsCandidate = require('../../models/cms/CmsCandidate')
 const CmsCompany = require('../../models/cms/CmsCompany')
 const CmsInterview = require('../../models/cms/CmsInterview')
 const CmsRemark = require('../../models/cms/CmsRemark')
+const { nextCandidateCode } = require('../../utils/cmsCandidateCode')
+const { syncCandidateFromCms } = require('../../utils/candidateStatusSync')
 
 const remarkKeys = [
   'documentsSubmitted',
@@ -27,6 +29,10 @@ const remarkKeys = [
 ]
 
 const successRemarkKeys = [
+  'selected',
+  'joined',
+  'notSelected',
+  'rejected',
   'resumeReady',
   'educationVerified',
   'experienceVerified',
@@ -98,12 +104,27 @@ const ensureUniqueCmsCompanyIdentity = async (payload, excludeId) => {
 }
 
 const createCandidate = async (req, res) => {
+  const candidateCode = await nextCandidateCode(new Date())
   const candidate = await CmsCandidate.create({
     ...req.body,
+    candidateCode,
     createdBy: req.user._id
   })
   await ensureRemark(candidate._id)
   res.status(201).json(candidate)
+}
+
+const withResolvedReference = (candidateDoc) => {
+  const candidate = candidateDoc?.toObject ? candidateDoc.toObject() : candidateDoc
+  if (!candidate) return candidate
+
+  if (!candidate.referenceName && candidate.intakeType === 'advisor') {
+    const advisorName =
+      candidate.advisor?.name || candidate.advisor?.email || candidate.advisor?.advisorCode || null
+    candidate.referenceName = advisorName
+  }
+
+  return candidate
 }
 
 const createCompany = async (req, res) => {
@@ -133,8 +154,11 @@ const listCandidates = async (req, res) => {
     query.marriageStatus = marriageStatus
   }
 
-  const candidates = await CmsCandidate.find(query).sort({ createdAt: -1 })
-  res.json(candidates)
+  const candidates = await CmsCandidate.find(query)
+    .populate('advisor', 'name email advisorCode')
+    .sort({ createdAt: -1 })
+
+  res.json(candidates.map(withResolvedReference))
 }
 
 const listCompanies = async (req, res) => {
@@ -160,7 +184,10 @@ const listCompanies = async (req, res) => {
 }
 
 const getCandidateById = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id).populate('createdBy', 'name email')
+  const candidateDoc = await CmsCandidate.findById(req.params.id)
+    .populate('createdBy', 'name email')
+    .populate('advisor', 'name email advisorCode')
+  const candidate = withResolvedReference(candidateDoc)
 
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
@@ -198,6 +225,7 @@ const updateCandidate = async (req, res) => {
   })
 
   await candidate.save()
+  await syncCandidateFromCms(candidate)
   res.json(candidate)
 }
 
@@ -365,6 +393,9 @@ const updateRemarks = async (req, res) => {
   }
 
   await Promise.all([touched.processRemarks ? remark.save() : Promise.resolve(), touched.successRemarks ? candidate.save() : Promise.resolve()])
+  if (touched.successRemarks) {
+    await syncCandidateFromCms(candidate)
+  }
 
   res.json({
     remark,

@@ -1,6 +1,7 @@
 const express = require('express')
 const rateLimit = require('express-rate-limit')
 const { getAdvisorByCode, submitApplication } = require('../controllers/publicController')
+const { cache } = require('../src/middleware/cache')
 
 const router = express.Router()
 
@@ -16,7 +17,7 @@ const submitLimiter = rateLimit({
   message: { message: 'Too many submissions from this connection.' }
 })
 
-router.get('/advisor/:code', codeLookupLimiter, getAdvisorByCode)
+router.get('/advisor/:code', codeLookupLimiter, cache(120), getAdvisorByCode)
 router.post('/apply', submitLimiter, submitApplication)
 router.post('/apply/:code', submitLimiter, submitApplication)
 

@@ -2,8 +2,10 @@ const mongoose = require('mongoose')
 const Placement = require('../models/Placement')
 const Candidate = require('../models/Candidate')
 const Company = require('../models/Company')
+const { syncCmsFromCandidate } = require('../utils/candidateStatusSync')
 const User = require('../models/User')
 const { emitToAdmin, emitToBA } = require('../socket')
+const { invalidateCache } = require('../src/utils/invalidateCache')
 
 const placementPopulate = (query) =>
   query
@@ -305,7 +307,14 @@ const normalizePlacementInput = (body) => {
 }
 
 const updateCandidateSelectionStatus = async (candidateId, selectionStatus) => {
-  await Candidate.findByIdAndUpdate(candidateId, { $set: { selectionStatus } })
+  const candidate = await Candidate.findByIdAndUpdate(candidateId, { $set: { selectionStatus } }, { new: true })
+  if (candidate) {
+    try {
+      await syncCmsFromCandidate(candidate)
+    } catch (error) {
+      console.error('CMS sync failed during placement update:', error.message)
+    }
+  }
 }
 
 const validateObjectId = (value, fieldName) => {
@@ -375,6 +384,9 @@ const createPlacement = async (req, res) => {
 
   emitToBA(savedPlacement.baId?._id || savedPlacement.baId, 'my_placement', toRoomPayload(savedPlacement))
 
+  invalidateCache('/api/placements').catch(() => {})
+  invalidateCache(`/api/placements/${placement._id.toString()}`).catch(() => {})
+  invalidateCache('/api/placements/summary').catch(() => {})
   res.status(201).json(normalizedSavedPlacement)
 }
 
@@ -497,6 +509,10 @@ const updatePlacement = async (req, res) => {
   emitToBA(savedPlacement.baId?._id || savedPlacement.baId, 'placement_updated', toRoomPayload(savedPlacement))
   emitToAdmin('placement_updated', toAdminPlacementEventPayload(savedPlacement))
 
+  invalidateCache('/api/placements').catch(() => {})
+  invalidateCache(`/api/placements/${req.params.id}`).catch(() => {})
+  invalidateCache('/api/placements/summary').catch(() => {})
+  invalidateCache(`/api/placements/ba/${savedPlacement.baId?._id || savedPlacement.baId}/summary`).catch(() => {})
   res.json(normalizedSavedPlacement)
 }
 
@@ -547,6 +563,10 @@ const markPlacementPaid = async (req, res) => {
   emitToAdmin('placement_paid', toAdminPlacementEventPayload(savedPlacement))
   emitToAdmin('placement_updated', toAdminPlacementEventPayload(savedPlacement))
 
+  invalidateCache('/api/placements').catch(() => {})
+  invalidateCache(`/api/placements/${req.params.id}`).catch(() => {})
+  invalidateCache('/api/placements/summary').catch(() => {})
+  invalidateCache(`/api/placements/ba/${savedPlacement.baId?._id || savedPlacement.baId}/summary`).catch(() => {})
   res.json(normalizedSavedPlacement)
 }
 
