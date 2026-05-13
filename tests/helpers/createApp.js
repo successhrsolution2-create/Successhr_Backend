@@ -71,7 +71,7 @@ const createApp = () => {
       return res.status(400).json({ message: 'Unexpected upload field' })
     }
 
-    return res.status(status).json({ message: error.message || 'Server error' })
+    return res.status(status).json({ message: error.publicMessage || error.message || 'Server error' })
   })
 
   return app

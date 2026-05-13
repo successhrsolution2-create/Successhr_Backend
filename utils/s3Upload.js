@@ -4,6 +4,20 @@ const requiredEnv = ['AWS_REGION', 'AWS_S3_BUCKET']
 
 const getMissing = () => requiredEnv.filter((key) => !process.env[key])
 
+const storageConfigError = (message) => {
+  const error = new Error(message)
+  error.statusCode = 503
+  error.publicMessage = 'File upload storage is not configured. Please contact support.'
+  return error
+}
+
+const storageUnavailableError = (message, statusCode = 503) => {
+  const error = new Error(message)
+  error.statusCode = statusCode
+  error.publicMessage = 'File upload storage is temporarily unavailable. Please try again later.'
+  return error
+}
+
 const buildS3Client = () => {
   const region = process.env.AWS_REGION
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID
@@ -67,9 +81,7 @@ const s3KeyFromFileUrl = (fileUrl) => {
 const uploadToS3 = async (file, folder = 'uploads') => {
   const missing = getMissing()
   if (missing.length) {
-    const error = new Error(`Missing S3 env vars: ${missing.join(', ')}`)
-    error.statusCode = 500
-    throw error
+    throw storageConfigError(`Missing S3 env vars: ${missing.join(', ')}`)
   }
 
   if (!file?.buffer) {
@@ -99,11 +111,9 @@ const uploadToS3 = async (file, folder = 'uploads') => {
       message.toLowerCase().includes('credential') ||
       message.toLowerCase().includes('could not load credentials')
     ) {
-      const error = new Error(
+      throw storageConfigError(
         'S3 upload failed: AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in backend/.env (or configure an AWS profile/IAM role).'
       )
-      error.statusCode = 500
-      throw error
     }
 
     if (
@@ -114,16 +124,12 @@ const uploadToS3 = async (file, folder = 'uploads') => {
       const hint = bucketRegion
         ? ` Bucket region appears to be "${bucketRegion}".`
         : ''
-      const error = new Error(
+      throw storageConfigError(
         `S3 upload failed: bucket endpoint/region mismatch.${hint} Update AWS_REGION (and optionally AWS_S3_ENDPOINT) in backend/.env.`
       )
-      error.statusCode = 500
-      throw error
     }
 
-    const error = new Error(`S3 upload failed: ${message}`)
-    error.statusCode = err?.$metadata?.httpStatusCode || 500
-    throw error
+    throw storageUnavailableError(`S3 upload failed: ${message}`, err?.$metadata?.httpStatusCode || 503)
   }
 
   const customEndpoint = String(process.env.AWS_S3_ENDPOINT || '').trim().replace(/\/$/, '')
@@ -143,9 +149,7 @@ module.exports = {
   getObjectFromS3: async (fileUrlOrKey) => {
     const missing = getMissing()
     if (missing.length) {
-      const error = new Error(`Missing S3 env vars: ${missing.join(', ')}`)
-      error.statusCode = 500
-      throw error
+      throw storageConfigError(`Missing S3 env vars: ${missing.join(', ')}`)
     }
 
     const key = s3KeyFromFileUrl(fileUrlOrKey)

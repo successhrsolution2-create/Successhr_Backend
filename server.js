@@ -109,7 +109,7 @@ app.use((error, _req, res, _next) => {
   }
 
   console.error(error)
-  res.status(status).json({ message: error.message || 'Server error' })
+  res.status(status).json({ message: error.publicMessage || error.message || 'Server error' })
 })
 
 const start = async () => {
