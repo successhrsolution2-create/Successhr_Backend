@@ -6,11 +6,13 @@ const createApp = require('../helpers/createApp')
 describe('Public Apply API', () => {
   let app
   let ba
+  let adminToken
 
   beforeEach(async () => {
     app = createApp()
     await createSuperAdmin({ email: 'admin@test.com' })
     ba = await createBA({ email: 'ba@test.com', advisorCode: 'successba01', isActive: true })
+    adminToken = await getToken(app, 'admin@test.com', 'Admin@123')
   })
 
   test('GET /api/public/advisor/:code returns advisor display data only', async () => {
@@ -125,5 +127,59 @@ describe('Public Apply API', () => {
       .send({ candidateName: 'Case Test', mobileNumber: '9999999999' })
 
     expect(res.status).toBe(201)
+  })
+
+  test('dashboard candidate delete removes linked CMS candidate so the mobile can apply again', async () => {
+    const first = await request(app)
+      .post('/api/public/apply/successba01')
+      .send({ candidateName: 'Delete Flow', mobileNumber: '9888888801' })
+
+    expect(first.status).toBe(201)
+
+    const student = await Student.findOne({ mobileNumber: '9888888801' })
+    const cmsCandidate = await CmsCandidate.findOne({ mobileNumber: '9888888801' })
+    expect(student).toBeTruthy()
+    expect(cmsCandidate).toBeTruthy()
+
+    const deleted = await request(app)
+      .delete(`/api/students/${student._id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(deleted.status).toBe(200)
+    await expect(Student.findById(student._id)).resolves.toBeNull()
+    await expect(CmsCandidate.findById(cmsCandidate._id)).resolves.toBeNull()
+
+    const second = await request(app)
+      .post('/api/public/apply/successba01')
+      .send({ candidateName: 'Delete Flow Again', mobileNumber: '9888888801' })
+
+    expect(second.status).toBe(201)
+  })
+
+  test('CMS candidate delete removes linked dashboard candidate so the mobile can apply again', async () => {
+    const first = await request(app)
+      .post('/api/public/apply/successba01')
+      .send({ candidateName: 'CMS Delete Flow', mobileNumber: '9888888802' })
+
+    expect(first.status).toBe(201)
+
+    const student = await Student.findOne({ mobileNumber: '9888888802' })
+    const cmsCandidate = await CmsCandidate.findOne({ mobileNumber: '9888888802' })
+    expect(student).toBeTruthy()
+    expect(cmsCandidate).toBeTruthy()
+
+    const deleted = await request(app)
+      .delete(`/api/cms/candidates/${cmsCandidate._id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+
+    expect(deleted.status).toBe(200)
+    await expect(CmsCandidate.findById(cmsCandidate._id)).resolves.toBeNull()
+    await expect(Student.findById(student._id)).resolves.toBeNull()
+
+    const second = await request(app)
+      .post('/api/public/apply/successba01')
+      .send({ candidateName: 'CMS Delete Flow Again', mobileNumber: '9888888802' })
+
+    expect(second.status).toBe(201)
   })
 })

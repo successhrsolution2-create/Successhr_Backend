@@ -16,13 +16,13 @@ describe('rate limiting', () => {
     expect(tooMany.length).toBeGreaterThan(0)
   })
 
-  test('public form submit is rate limited after 5 submissions/hour', async () => {
+  test('public form submit is rate limited after 30 successful submissions/hour', async () => {
     const submit = (index) =>
       request(app)
         .post('/api/public/apply/successba01')
         .send({ candidateName: `Rate Test ${index}`, mobileNumber: `98${String(10000000 + index).slice(-8)}` })
 
-    const responses = await Promise.all(Array.from({ length: 6 }, (_value, index) => submit(index)))
+    const responses = await Promise.all(Array.from({ length: 31 }, (_value, index) => submit(index)))
     const tooMany = responses.filter((res) => res.status === 429)
     expect(tooMany.length).toBeGreaterThan(0)
   })

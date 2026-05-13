@@ -1,6 +1,7 @@
 const Candidate = require('../models/Candidate')
 const Placement = require('../models/Placement')
 const CmsCandidate = require('../models/cms/CmsCandidate')
+const CmsInterview = require('../models/cms/CmsInterview')
 const CmsRemark = require('../models/cms/CmsRemark')
 const BusinessAdvisor = require('../models/BusinessAdvisor')
 const { nextCandidateCode } = require('../utils/cmsCandidateCode')
@@ -407,6 +408,15 @@ const deleteCandidate = async (req, res) => {
 
   if (linkedPlacements.length) {
     await Placement.deleteMany({ _id: { $in: linkedPlacements.map((placement) => placement._id) } })
+  }
+
+  const linkedCmsCandidate = await CmsCandidate.findOne({ sourceCandidateId: candidate._id }).select('_id')
+  if (linkedCmsCandidate) {
+    await Promise.all([
+      CmsInterview.deleteMany({ candidateId: linkedCmsCandidate._id }),
+      CmsRemark.deleteOne({ candidateId: linkedCmsCandidate._id }),
+      linkedCmsCandidate.deleteOne()
+    ])
   }
 
   await candidate.deleteOne()

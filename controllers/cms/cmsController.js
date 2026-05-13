@@ -3,6 +3,7 @@ const CmsCompany = require('../../models/cms/CmsCompany')
 const CmsInterview = require('../../models/cms/CmsInterview')
 const CmsRemark = require('../../models/cms/CmsRemark')
 const Candidate = require('../../models/Candidate')
+const Placement = require('../../models/Placement')
 const jwt = require('jsonwebtoken')
 const { nextCandidateCode } = require('../../utils/cmsCandidateCode')
 const { syncCandidateFromCms } = require('../../utils/candidateStatusSync')
@@ -604,12 +605,25 @@ const deleteCandidate = async (req, res) => {
     return res.status(404).json({ message: 'Candidate not found' })
   }
 
+  const linkedCandidate = candidate.sourceCandidateId
+    ? await Candidate.findById(candidate.sourceCandidateId).select('_id')
+    : null
+
   await Promise.all([
     CmsInterview.deleteMany({ candidateId: candidate._id }),
     CmsRemark.deleteOne({ candidateId: candidate._id }),
+    linkedCandidate
+      ? Placement.deleteMany({
+          $or: [{ candidateId: linkedCandidate._id }, { studentId: linkedCandidate._id }]
+        })
+      : Promise.resolve(),
+    linkedCandidate ? linkedCandidate.deleteOne() : Promise.resolve(),
     candidate.deleteOne()
   ])
 
+  invalidateReferenceCaches()
+  invalidateCache('/api/placements').catch(() => {})
+  invalidateCache('/api/placements/summary').catch(() => {})
   res.json({ message: 'Candidate deleted' })
 }
 
