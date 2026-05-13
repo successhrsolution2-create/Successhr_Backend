@@ -48,6 +48,29 @@ const defaultCheckboxes = () =>
 
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+const parseNumber = (value) => {
+  if (value === undefined || value === null || value === '') return undefined
+  const parsed = Number(String(value).replace(/,/g, '').trim())
+  return Number.isFinite(parsed) ? parsed : NaN
+}
+
+const candidateIdentityChecks = (payload) =>
+  [
+    { field: 'mobileNumber', label: 'mobile number', value: payload.mobileNumber },
+    { field: 'emailId', label: 'email', value: payload.emailId },
+    { field: 'aadhaarNo', label: 'aadhaar number', value: payload.aadhaarNo }
+  ].filter((item) => item.value)
+
+const candidateConflict = (message) => {
+  const error = new Error(message)
+  error.statusCode = 409
+  return error
+}
+
+const invalidateCandidateCaches = () => {
+  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCache('/api/students').catch(() => {})
+}
 
 const normalizeCandidateIdentity = (payload) => {
   const normalizedMobile = toDigits(payload.mobileNumber)
@@ -89,12 +112,9 @@ const normalizeCandidateIdentity = (payload) => {
   payload.emailId = normalizedEmail || undefined
 }
 
-const ensureUniqueCandidateIdentity = async (payload, excludeId) => {
-  const checks = [
-    { field: 'mobileNumber', label: 'mobile number', value: payload.mobileNumber },
-    { field: 'emailId', label: 'email', value: payload.emailId },
-    { field: 'aadhaarNo', label: 'aadhaar number', value: payload.aadhaarNo }
-  ].filter((item) => item.value)
+const ensureUniqueCandidateIdentity = async (payload, excludeId, options = {}) => {
+  const checkCms = options.checkCms ?? !excludeId
+  const checks = candidateIdentityChecks(payload)
 
   for (const check of checks) {
     const query = { [check.field]: check.value }
@@ -104,11 +124,57 @@ const ensureUniqueCandidateIdentity = async (payload, excludeId) => {
 
     const existing = await Candidate.findOne(query).select('_id')
     if (existing) {
-      const error = new Error(`A candidate with this ${check.label} already exists`)
-      error.statusCode = 409
-      throw error
+      throw candidateConflict(`A candidate with this ${check.label} already exists`)
+    }
+
+    if (checkCms) {
+      const cmsQuery = { [check.field]: check.value }
+      const existingCms = await CmsCandidate.findOne(cmsQuery).select('_id candidateCode fullName')
+      if (existingCms) {
+        throw candidateConflict(`A candidate with this ${check.label} already exists`)
+      }
     }
   }
+}
+
+const findClaimableCmsCandidate = async (payload, advisorId) => {
+  const matches = new Map()
+
+  for (const check of candidateIdentityChecks(payload)) {
+    const existingCms = await CmsCandidate.findOne({ [check.field]: check.value }).select(
+      '_id candidateCode source sourceCandidateId advisor mobileNumber emailId aadhaarNo createdBy'
+    )
+
+    if (existingCms) {
+      const key = existingCms._id.toString()
+      const match = matches.get(key) || { cmsCandidate: existingCms, labels: [] }
+      match.labels.push(check.label)
+      matches.set(key, match)
+    }
+  }
+
+  if (!matches.size) return null
+
+  if (matches.size > 1) {
+    throw candidateConflict(
+      'These candidate details match multiple candidate management records. Please update the existing records before submitting this reference.'
+    )
+  }
+
+  const [{ cmsCandidate, labels }] = [...matches.values()]
+
+  if (cmsCandidate.sourceCandidateId) {
+    const linkedCandidate = await Candidate.findById(cmsCandidate.sourceCandidateId).select('_id')
+    if (linkedCandidate) {
+      throw candidateConflict(`A candidate with this ${labels[0]} already exists`)
+    }
+  }
+
+  if (cmsCandidate.advisor && cmsCandidate.advisor.toString() !== advisorId.toString()) {
+    throw candidateConflict('This candidate management record is already assigned to another business advisor')
+  }
+
+  return cmsCandidate
 }
 
 const populateCandidate = (query) => query.populate('submittedBy', 'name email')
@@ -131,20 +197,33 @@ const resolveAdvisorDisplayName = async (advisor) => {
   return advisor?.email || advisor?.advisorCode || null
 }
 
-const mirrorCandidateToCms = async (candidate, advisor) => {
+const buildCmsCandidatePayload = async (candidate, advisor) => {
   const advisorName = await resolveAdvisorDisplayName(advisor)
-  const candidateCode = await nextCandidateCode(new Date())
-  const cmsCandidate = await CmsCandidate.create({
-    candidateCode,
+
+  return {
+    sourceCandidateId: candidate._id,
+    formMeta: candidate.formMeta,
     fullName: candidate.candidateName,
+    collegeName: candidate.collegeName,
     mobileNumber: candidate.mobileNumber,
     aadhaarNo: candidate.aadhaarNo,
+    panNo: candidate.panNo,
     whatsappNo: candidate.whatsappNo,
     emailId: candidate.emailId,
+    gender: candidate.gender,
+    currentAge: candidate.currentAge,
+    currentAddress: candidate.currentAddress,
+    permanentAddress: candidate.permanentAddress,
     education: candidate.education,
+    yearOfHigherEducation: candidate.yearOfHigherEducation,
+    computerCourses: candidate.computerCourses,
+    otherAchievements: candidate.otherAchievements,
     specialization: candidate.interestedDepartment,
     totalExperience: candidate.totalExperience,
+    experienceDepartment: candidate.experienceDepartment,
     currentCompany: candidate.currentCompany,
+    lookingForField: candidate.lookingForField,
+    keyResponsibilities: candidate.keyResponsibilities,
     careerSummary: candidate.careerSummary,
     currentDesignation: candidate.appliedFor || undefined,
     currentSalary: candidate.currentSalary,
@@ -159,19 +238,61 @@ const mirrorCandidateToCms = async (candidate, advisor) => {
     availabilityForInterview: candidate.availabilityForInterview,
     reasonForJobChange: candidate.reasonForJobChange,
     currentJobLocation: candidate.currentJobLocation,
+    placementReference: candidate.placementReference,
+    familyDetails: candidate.familyDetails,
+    goalAim: candidate.goalAim,
+    feedback: candidate.feedback,
+    suggestion: candidate.suggestion,
+    documents: candidate.documents || [],
     source: candidate.source || 'admin_panel',
     intakeType: 'advisor',
     advisor: advisor?._id || candidate.submittedBy,
     advisorCode: advisor?.advisorCode,
     referenceName: advisorName || candidate.reference_name || null,
     createdBy: advisor?._id || candidate.submittedBy
-  })
+  }
+}
 
+const ensureCmsRemark = async (candidateId) => {
   await CmsRemark.updateOne(
-    { candidateId: cmsCandidate._id },
+    { candidateId },
     { $setOnInsert: { checkboxes: defaultCheckboxes() } },
     { upsert: true }
   )
+}
+
+const mirrorCandidateToCms = async (candidate, advisor, existingCmsCandidate = null) => {
+  const payload = await buildCmsCandidatePayload(candidate, advisor)
+
+  if (existingCmsCandidate) {
+    Object.entries(payload).forEach(([key, value]) => {
+      if (value !== undefined && key !== 'createdBy' && key !== 'source') {
+        existingCmsCandidate[key] = value
+      }
+    })
+
+    if (!existingCmsCandidate.source) {
+      existingCmsCandidate.source = payload.source
+    }
+    if (!existingCmsCandidate.createdBy) {
+      existingCmsCandidate.createdBy = payload.createdBy
+    }
+    if (!existingCmsCandidate.candidateCode) {
+      existingCmsCandidate.candidateCode = await nextCandidateCode(new Date())
+    }
+
+    await existingCmsCandidate.save()
+    await ensureCmsRemark(existingCmsCandidate._id)
+    return existingCmsCandidate
+  }
+
+  const candidateCode = await nextCandidateCode(new Date())
+  const cmsCandidate = await CmsCandidate.create({
+    candidateCode,
+    ...payload
+  })
+
+  await ensureCmsRemark(cmsCandidate._id)
 
   return cmsCandidate
 }
@@ -187,7 +308,8 @@ const getCandidates = async (req, res) => {
 
 const createCandidate = async (req, res) => {
   normalizeCandidateIdentity(req.body)
-  await ensureUniqueCandidateIdentity(req.body)
+  await ensureUniqueCandidateIdentity(req.body, null, { checkCms: false })
+  const existingCmsCandidate = await findClaimableCmsCandidate(req.body, req.user._id)
 
   await Candidate.updateMany({ status: 'not_viewed' }, { $inc: { priorityOrder: 1 } })
 
@@ -205,11 +327,11 @@ const createCandidate = async (req, res) => {
   })
 
   candidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
-  await mirrorCandidateToCms(candidate, req.user)
+  await mirrorCandidateToCms(candidate, req.user, existingCmsCandidate)
   emitCandidateEvent('new_candidate', 'candidate_updated', ownerUserId(candidate), candidate)
   emitCandidateEvent('new_student', 'student_updated', ownerUserId(candidate), candidate)
 
-  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCandidateCaches()
   res.status(201).json(candidate)
 }
 
@@ -266,8 +388,7 @@ const updateCandidate = async (req, res) => {
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
-  invalidateCache('/api/candidates').catch(() => {})
-  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
+  invalidateCandidateCaches()
   res.json(savedCandidate)
 }
 
@@ -301,8 +422,7 @@ const deleteCandidate = async (req, res) => {
     emitToBA(placement.baId, 'placement_deleted', { ...payload, studentId: deletedId })
   })
 
-  invalidateCache('/api/candidates').catch(() => {})
-  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
+  invalidateCandidateCaches()
   invalidateCache('/api/placements').catch(() => {})
   invalidateCache('/api/placements/summary').catch(() => {})
   res.json({ message: 'Candidate reference deleted' })
@@ -337,12 +457,12 @@ const uploadCandidateDocuments = async (req, res) => {
 
   await candidate.save()
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
+  await syncCmsFromCandidate(savedCandidate)
 
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
-  invalidateCache('/api/candidates').catch(() => {})
-  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
+  invalidateCandidateCaches()
   res.json(savedCandidate)
 }
 
@@ -362,16 +482,16 @@ const deleteCandidateDocument = async (req, res) => {
   await candidate.save()
 
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
+  await syncCmsFromCandidate(savedCandidate)
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
-  invalidateCache('/api/candidates').catch(() => {})
-  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
+  invalidateCandidateCaches()
   res.json(savedCandidate)
 }
 
 const updateCandidateStatus = async (req, res) => {
-  const { status, adminNotes } = req.body
+  const { status, adminNotes, advisorCommission = {} } = req.body
   const candidate = await Candidate.findById(req.params.id)
 
   if (!candidate) {
@@ -397,6 +517,42 @@ const updateCandidateStatus = async (req, res) => {
     candidate.adminNotes = adminNotes
   }
 
+  const hasCommissionUpdate =
+    advisorCommission.salary !== undefined ||
+    advisorCommission.percentage !== undefined ||
+    advisorCommission.paymentStatus !== undefined
+
+  if (hasCommissionUpdate) {
+    const salary = parseNumber(advisorCommission.salary)
+    const percentage = parseNumber(advisorCommission.percentage)
+    const paymentStatus = advisorCommission.paymentStatus
+
+    if (Number.isNaN(salary) || salary < 0) {
+      return res.status(400).json({ message: 'Salary must be a valid non-negative number' })
+    }
+
+    if (Number.isNaN(percentage) || percentage < 0 || percentage > 100) {
+      return res.status(400).json({ message: 'Advisor percentage must be between 0 and 100' })
+    }
+
+    if (paymentStatus && !['pending', 'paid'].includes(paymentStatus)) {
+      return res.status(400).json({ message: 'Invalid payment status' })
+    }
+
+    const currentCommission = candidate.advisorCommission || {}
+    const nextSalary = salary === undefined ? Number(currentCommission.salary || 0) : salary
+    const nextPercentage = percentage === undefined ? Number(currentCommission.percentage || 0) : percentage
+    const nextPaymentStatus = paymentStatus || currentCommission.paymentStatus || 'pending'
+
+    candidate.advisorCommission = {
+      salary: nextSalary,
+      percentage: nextPercentage,
+      amount: Math.round(nextSalary * (nextPercentage / 100)),
+      paymentStatus: nextPaymentStatus,
+      paidAt: nextPaymentStatus === 'paid' ? currentCommission.paidAt || new Date() : undefined
+    }
+  }
+
   await candidate.save()
 
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
@@ -410,8 +566,7 @@ const updateCandidateStatus = async (req, res) => {
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
-  invalidateCache('/api/candidates').catch(() => {})
-  invalidateCache(`/api/candidates/${req.params.id}`).catch(() => {})
+  invalidateCandidateCaches()
   res.json(savedCandidate)
 }
 
@@ -432,7 +587,7 @@ const reorderCandidates = async (req, res) => {
   )
 
   emitToAdmin('reordered', { type: 'candidate', orderedIds })
-  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCandidateCaches()
   res.json({ orderedIds })
 }
 

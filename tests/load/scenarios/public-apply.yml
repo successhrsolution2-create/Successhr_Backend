@@ -1,0 +1,22 @@
+config:
+  target: "http://localhost:5000"
+  phases:
+    - duration: 60
+      arrivalRate: 10
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "Public apply"
+    flow:
+      - get:
+          url: "/api/public/advisor/successba01"
+          expect:
+            - statusCode: 200
+      - post:
+          url: "/api/public/apply/successba01"
+          json:
+            candidateName: "Public Scenario {{ $randomString() }}"
+            mobileNumber: "98{{ $randomNumber(10000000, 99999999) }}"
+          expect:
+            - statusCode: 201

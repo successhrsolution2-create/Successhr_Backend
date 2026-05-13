@@ -88,11 +88,10 @@ placementSchema.virtual('studentId')
     this.candidateId = value
   })
 
-placementSchema.pre('validate', function normalizeLegacyCandidateRef(next) {
+placementSchema.pre('validate', function normalizeLegacyCandidateRef() {
   if (!this.candidateId && this.studentId) {
     this.candidateId = this.studentId
   }
-  next()
 })
 
 placementSchema.pre('save', function updateEarning() {

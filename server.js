@@ -97,7 +97,15 @@ app.use((error, _req, res, _next) => {
   }
 
   if (error.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({ message: 'File size must be 5MB or less' })
+    return res.status(400).json({ message: 'File size must be 10MB or less' })
+  }
+
+  if (error.code === 'LIMIT_FILE_COUNT') {
+    return res.status(400).json({ message: 'Too many files uploaded' })
+  }
+
+  if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({ message: 'Unexpected upload field' })
   }
 
   console.error(error)

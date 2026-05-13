@@ -30,6 +30,11 @@ const selectionFromCms = (successRemarks = {}) => {
 }
 
 const findCmsByCandidate = async (candidate) => {
+  if (candidate?._id) {
+    const linked = await CmsCandidate.findOne({ sourceCandidateId: candidate._id }).sort({ createdAt: -1 })
+    if (linked) return linked
+  }
+
   if (!candidate?.mobileNumber) return null
   const query = { mobileNumber: candidate.mobileNumber }
   if (candidate?.submittedBy) query.advisor = candidate.submittedBy
@@ -45,6 +50,17 @@ const findCandidateByCms = async (cmsCandidate) => {
   return Candidate.findOne(query).sort({ createdAt: -1 })
 }
 
+const copyDocuments = (documents = []) =>
+  (documents || []).map((doc) => ({
+    documentType: doc.documentType,
+    documentLabel: doc.documentLabel,
+    fileName: doc.fileName,
+    fileUrl: doc.fileUrl,
+    mimeType: doc.mimeType,
+    size: doc.size,
+    uploadedAt: doc.uploadedAt
+  }))
+
 const syncCmsFromCandidate = async (candidateOrId) => {
   const candidate =
     typeof candidateOrId === 'string' ? await Candidate.findById(candidateOrId) : candidateOrId
@@ -53,11 +69,31 @@ const syncCmsFromCandidate = async (candidateOrId) => {
   const cmsCandidate = await findCmsByCandidate(candidate)
   if (!cmsCandidate) return
 
+  if (candidate._id && !cmsCandidate.sourceCandidateId) {
+    cmsCandidate.sourceCandidateId = candidate._id
+  }
+
   const mapped = cmsFromSelection(candidate.selectionStatus)
   if (candidate.candidateName) cmsCandidate.fullName = candidate.candidateName
+  if (candidate.formMeta) cmsCandidate.formMeta = candidate.formMeta
+  if (candidate.collegeName !== undefined) cmsCandidate.collegeName = candidate.collegeName
   if (candidate.mobileNumber) cmsCandidate.mobileNumber = candidate.mobileNumber
+  if (candidate.whatsappNo !== undefined) cmsCandidate.whatsappNo = candidate.whatsappNo
+  if (candidate.emailId !== undefined) cmsCandidate.emailId = candidate.emailId
   if (candidate.appliedFor) cmsCandidate.appliedFor = candidate.appliedFor
   if (candidate.education) cmsCandidate.education = candidate.education
+  if (candidate.preferredJobLocation !== undefined) cmsCandidate.preferredJobLocation = candidate.preferredJobLocation
+  if (candidate.totalExperience !== undefined) cmsCandidate.totalExperience = candidate.totalExperience
+  if (candidate.experienceDepartment !== undefined) cmsCandidate.experienceDepartment = candidate.experienceDepartment
+  if (candidate.currentSalary !== undefined) cmsCandidate.currentSalary = candidate.currentSalary
+  if (candidate.expectedSalary !== undefined) cmsCandidate.expectedSalary = candidate.expectedSalary
+  if (candidate.noticePeriod !== undefined) cmsCandidate.noticePeriod = String(candidate.noticePeriod)
+  if (candidate.currentJobLocation !== undefined) cmsCandidate.currentJobLocation = candidate.currentJobLocation
+  if (candidate.reasonForJobChange !== undefined) cmsCandidate.reasonForJobChange = candidate.reasonForJobChange
+  if (candidate.familyDetails) cmsCandidate.familyDetails = candidate.familyDetails
+  if (candidate.goalAim !== undefined) cmsCandidate.goalAim = candidate.goalAim
+  if (candidate.successInfo !== undefined) cmsCandidate.successInfo = candidate.successInfo
+  if (candidate.documents !== undefined) cmsCandidate.documents = copyDocuments(candidate.documents)
 
   cmsCandidate.successRemarks = cmsCandidate.successRemarks || {}
   cmsCandidate.successRemarks.selected = {
@@ -90,9 +126,25 @@ const syncCandidateFromCms = async (cmsCandidateOrId) => {
   if (!candidate) return
 
   if (cmsCandidate.fullName) candidate.candidateName = cmsCandidate.fullName
+  if (cmsCandidate.formMeta) candidate.formMeta = cmsCandidate.formMeta
+  if (cmsCandidate.collegeName !== undefined) candidate.collegeName = cmsCandidate.collegeName
   if (cmsCandidate.mobileNumber) candidate.mobileNumber = cmsCandidate.mobileNumber
+  if (cmsCandidate.whatsappNo !== undefined) candidate.whatsappNo = cmsCandidate.whatsappNo
+  if (cmsCandidate.emailId !== undefined) candidate.emailId = cmsCandidate.emailId
   if (cmsCandidate.appliedFor) candidate.appliedFor = cmsCandidate.appliedFor
   if (cmsCandidate.education) candidate.education = cmsCandidate.education
+  if (cmsCandidate.preferredJobLocation !== undefined) candidate.preferredJobLocation = cmsCandidate.preferredJobLocation
+  if (cmsCandidate.totalExperience !== undefined) candidate.totalExperience = cmsCandidate.totalExperience
+  if (cmsCandidate.experienceDepartment !== undefined) candidate.experienceDepartment = cmsCandidate.experienceDepartment
+  if (cmsCandidate.currentSalary !== undefined) candidate.currentSalary = cmsCandidate.currentSalary
+  if (cmsCandidate.expectedSalary !== undefined) candidate.expectedSalary = cmsCandidate.expectedSalary
+  if (cmsCandidate.noticePeriod !== undefined) candidate.noticePeriod = Number(cmsCandidate.noticePeriod) || undefined
+  if (cmsCandidate.currentJobLocation !== undefined) candidate.currentJobLocation = cmsCandidate.currentJobLocation
+  if (cmsCandidate.reasonForJobChange !== undefined) candidate.reasonForJobChange = cmsCandidate.reasonForJobChange
+  if (cmsCandidate.familyDetails) candidate.familyDetails = cmsCandidate.familyDetails
+  if (cmsCandidate.goalAim !== undefined) candidate.goalAim = cmsCandidate.goalAim
+  if (cmsCandidate.successInfo !== undefined) candidate.successInfo = cmsCandidate.successInfo
+  if (cmsCandidate.documents !== undefined) candidate.documents = copyDocuments(cmsCandidate.documents)
   candidate.selectionStatus = selectionFromCms(cmsCandidate.successRemarks)
   await candidate.save()
 }

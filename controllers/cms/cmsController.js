@@ -2,8 +2,30 @@ const CmsCandidate = require('../../models/cms/CmsCandidate')
 const CmsCompany = require('../../models/cms/CmsCompany')
 const CmsInterview = require('../../models/cms/CmsInterview')
 const CmsRemark = require('../../models/cms/CmsRemark')
+const Candidate = require('../../models/Candidate')
+const jwt = require('jsonwebtoken')
 const { nextCandidateCode } = require('../../utils/cmsCandidateCode')
 const { syncCandidateFromCms } = require('../../utils/candidateStatusSync')
+const { uploadToS3, getObjectFromS3 } = require('../../utils/s3Upload')
+const { validateUploadFile } = require('../../utils/fileValidation')
+const { generateSuccessRemarkPdf, successRemarkPdfFileName } = require('../../utils/successRemarkPdf')
+const {
+  candidateDocumentAllowedExtensionsByKey,
+  candidateDocumentAllowedMimeTypesByKey,
+  candidateDocumentLabelByKey,
+  isCandidateDocumentKey
+} = require('../../utils/candidateDocuments')
+const { invalidateCache } = require('../../src/utils/invalidateCache')
+
+const interviewDocumentLabelByKey = {
+  appointmentLetter: 'Appointment Letter',
+  offerLetter: 'Offer Letter',
+  interviewLetter: 'Interview Letter',
+  confirmationLetter: 'Confirmation Letter'
+}
+
+const isInterviewDocumentKey = (key) =>
+  Object.prototype.hasOwnProperty.call(interviewDocumentLabelByKey, key)
 
 const remarkKeys = [
   'documentsSubmitted',
@@ -63,6 +85,72 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 
+const invalidateReferenceCaches = () => {
+  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCache('/api/students').catch(() => {})
+}
+
+const normalizeCandidateIdentity = (payload) => {
+  const normalizedMobile = toDigits(payload.mobileNumber)
+  if (!normalizedMobile) {
+    const error = new Error('Mobile number is required')
+    error.statusCode = 400
+    throw error
+  }
+  if (normalizedMobile.length !== 10) {
+    const error = new Error('Mobile number must be 10 digits')
+    error.statusCode = 400
+    throw error
+  }
+
+  const normalizedWhatsapp = toDigits(payload.whatsappNo)
+  if (payload.whatsappNo && normalizedWhatsapp.length !== 10) {
+    const error = new Error('WhatsApp number must be 10 digits')
+    error.statusCode = 400
+    throw error
+  }
+
+  const normalizedAadhaar = toDigits(payload.aadhaarNo)
+  if (payload.aadhaarNo && normalizedAadhaar.length !== 12) {
+    const error = new Error('Aadhaar number must be 12 digits')
+    error.statusCode = 400
+    throw error
+  }
+
+  const normalizedEmail = normalizeEmail(payload.emailId)
+  if (normalizedEmail && !emailRegex.test(normalizedEmail)) {
+    const error = new Error('Enter a valid email')
+    error.statusCode = 400
+    throw error
+  }
+
+  payload.mobileNumber = normalizedMobile
+  payload.whatsappNo = normalizedWhatsapp || undefined
+  payload.aadhaarNo = normalizedAadhaar || undefined
+  payload.emailId = normalizedEmail || undefined
+}
+
+const ensureUniqueCandidateIdentity = async (payload) => {
+  const checks = [
+    { field: 'mobileNumber', label: 'mobile number', value: payload.mobileNumber },
+    { field: 'emailId', label: 'email', value: payload.emailId },
+    { field: 'aadhaarNo', label: 'aadhaar number', value: payload.aadhaarNo }
+  ].filter((item) => item.value)
+
+  for (const check of checks) {
+    const [existingCms, existingCandidate] = await Promise.all([
+      CmsCandidate.findOne({ [check.field]: check.value }).select('_id'),
+      Candidate.findOne({ [check.field]: check.value }).select('_id')
+    ])
+
+    if (existingCms || existingCandidate) {
+      const error = new Error(`A candidate with this ${check.label} already exists`)
+      error.statusCode = 409
+      throw error
+    }
+  }
+}
+
 const normalizeCompanyIdentity = (payload) => {
   const normalizedMobile = toDigits(payload.mobileNo)
   if (payload.mobileNo && normalizedMobile.length !== 10) {
@@ -104,6 +192,9 @@ const ensureUniqueCmsCompanyIdentity = async (payload, excludeId) => {
 }
 
 const createCandidate = async (req, res) => {
+  normalizeCandidateIdentity(req.body)
+  await ensureUniqueCandidateIdentity(req.body)
+
   const candidateCode = await nextCandidateCode(new Date())
   const candidate = await CmsCandidate.create({
     ...req.body,
@@ -158,7 +249,29 @@ const listCandidates = async (req, res) => {
     .populate('advisor', 'name email advisorCode')
     .sort({ createdAt: -1 })
 
-  res.json(candidates.map(withResolvedReference))
+  const candidateIds = candidates.map((candidate) => candidate._id)
+  const interviews = candidateIds.length
+    ? await CmsInterview.find({ candidateId: { $in: candidateIds } })
+        .select(
+          'candidateId candidateName companyName jobRole reference attendInterview interestedForJoin interviewDate selectionChances ratingForCompany notAttendRemark notInterestedReason replyFromCompany positiveFeedback negativeFeedback overallDiscussion note updatedBy remark result createdAt updatedAt'
+        )
+        .sort({ interviewDate: -1, createdAt: -1 })
+    : []
+  const interviewsByCandidate = interviews.reduce((acc, interview) => {
+    const key = String(interview.candidateId)
+    if (!acc.has(key)) acc.set(key, [])
+    acc.get(key).push(interview)
+    return acc
+  }, new Map())
+
+  res.json(
+    candidates.map((candidateDoc) => {
+      const candidate = withResolvedReference(candidateDoc)
+      candidate.interviews = interviewsByCandidate.get(String(candidate._id)) || []
+      candidate.interviewCount = candidate.interviews.length
+      return candidate
+    })
+  )
 }
 
 const listCompanies = async (req, res) => {
@@ -226,7 +339,242 @@ const updateCandidate = async (req, res) => {
 
   await candidate.save()
   await syncCandidateFromCms(candidate)
+  invalidateReferenceCaches()
   res.json(candidate)
+}
+
+const uploadCandidateDocument = async (req, res) => {
+  const candidate = await CmsCandidate.findById(req.params.id)
+  if (!candidate) {
+    return res.status(404).json({ message: 'Candidate not found' })
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ message: 'Document image is required' })
+  }
+
+  const documentType = String(req.body?.documentType || '').trim()
+  if (!isCandidateDocumentKey(documentType)) {
+    return res.status(400).json({ message: 'Invalid document type' })
+  }
+
+  validateUploadFile(req.file, {
+    allowedMimeTypes: candidateDocumentAllowedMimeTypesByKey[documentType],
+    allowedExtensions: candidateDocumentAllowedExtensionsByKey[documentType],
+    typeMessage: 'File type is not allowed for this document',
+    extensionMessage: 'File extension is not allowed for this document'
+  })
+  const fileUrl = await uploadToS3(req.file, 'candidate-documents')
+  candidate.documents = candidate.documents || []
+  candidate.documents.push({
+    documentType,
+    documentLabel: candidateDocumentLabelByKey[documentType],
+    fileName: req.file.originalname,
+    fileUrl,
+    mimeType: req.file.mimetype,
+    size: req.file.size,
+    uploadedAt: new Date()
+  })
+
+  await candidate.save()
+  await syncCandidateFromCms(candidate)
+  invalidateReferenceCaches()
+  res.json({ candidate: withResolvedReference(candidate) })
+}
+
+const deleteCandidateDocument = async (req, res) => {
+  const candidate = await CmsCandidate.findById(req.params.id)
+  if (!candidate) {
+    return res.status(404).json({ message: 'Candidate not found' })
+  }
+
+  const nextDocuments = (candidate.documents || []).filter((doc) => String(doc?._id) !== String(req.params.docId))
+  if (nextDocuments.length === (candidate.documents || []).length) {
+    return res.status(404).json({ message: 'Document not found' })
+  }
+
+  candidate.documents = nextDocuments
+  await candidate.save()
+  await syncCandidateFromCms(candidate)
+  invalidateReferenceCaches()
+  res.json({ candidate: withResolvedReference(candidate) })
+}
+
+const viewCandidateDocument = async (req, res) => {
+  const candidate = await CmsCandidate.findById(req.params.id).select('documents')
+  if (!candidate) {
+    return res.status(404).json({ message: 'Candidate not found' })
+  }
+
+  const doc = (candidate.documents || []).find((item) => String(item?._id) === String(req.params.docId))
+  if (!doc) {
+    return res.status(404).json({ message: 'Document not found' })
+  }
+
+  const object = await getObjectFromS3(doc.fileUrl)
+  const contentType = doc.mimeType || object?.ContentType || 'application/octet-stream'
+  const contentLength = doc.size || object?.ContentLength
+  const fileName = doc.fileName || 'document'
+
+  res.setHeader('Content-Type', contentType)
+  res.setHeader('Content-Disposition', `inline; filename="${fileName.replace(/"/g, '')}"`)
+  if (contentLength) {
+    res.setHeader('Content-Length', String(contentLength))
+  }
+
+  const body = object?.Body
+  if (!body) {
+    return res.status(404).json({ message: 'Document stream not found' })
+  }
+
+  if (typeof body.pipe === 'function') {
+    body.on('error', (error) => {
+      res.destroy(error)
+    })
+    body.pipe(res)
+    return
+  }
+
+  const chunks = []
+  // Fallback for async iterable body.
+  // eslint-disable-next-line no-restricted-syntax
+  for await (const chunk of body) {
+    chunks.push(chunk)
+  }
+  res.end(Buffer.concat(chunks))
+}
+
+const sendSuccessRemarkPdf = (res, candidate, disposition = 'attachment') => {
+  const buffer = generateSuccessRemarkPdf(candidate)
+  const fileName = successRemarkPdfFileName(candidate).replace(/"/g, '')
+
+  res.setHeader('Content-Type', 'application/pdf')
+  res.setHeader('Content-Length', String(buffer.length))
+  res.setHeader('Content-Disposition', `${disposition}; filename="${fileName}"`)
+  res.end(buffer)
+}
+
+const downloadSuccessRemarkPdf = async (req, res) => {
+  const candidate = await CmsCandidate.findById(req.params.id)
+  if (!candidate) {
+    return res.status(404).json({ message: 'Candidate not found' })
+  }
+
+  sendSuccessRemarkPdf(res, candidate, 'attachment')
+}
+
+const createSuccessRemarkShareLink = async (req, res) => {
+  const candidate = await CmsCandidate.findById(req.params.id).select('_id')
+  if (!candidate) {
+    return res.status(404).json({ message: 'Candidate not found' })
+  }
+
+  const token = jwt.sign(
+    {
+      purpose: 'success-remark-pdf',
+      candidateId: String(candidate._id)
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '30d' }
+  )
+  const baseUrl = `${req.protocol}://${req.get('host')}`
+
+  res.json({
+    url: `${baseUrl}/api/public/candidates/success-remark/${token}.pdf`,
+    expiresInDays: 30
+  })
+}
+
+const uploadInterviewDocument = async (req, res) => {
+  const interview = await CmsInterview.findById(req.params.interviewId)
+  if (!interview) {
+    return res.status(404).json({ message: 'Interview not found' })
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ message: 'Document file is required' })
+  }
+
+  const documentType = String(req.body?.documentType || '').trim()
+  if (!isInterviewDocumentKey(documentType)) {
+    return res.status(400).json({ message: 'Invalid interview document type' })
+  }
+
+  validateUploadFile(req.file)
+  const fileUrl = await uploadToS3(req.file, 'interview-documents')
+  interview.documents = interview.documents || []
+  interview.documents.push({
+    documentType,
+    documentLabel: interviewDocumentLabelByKey[documentType],
+    fileName: req.file.originalname,
+    fileUrl,
+    mimeType: req.file.mimetype,
+    size: req.file.size,
+    uploadedAt: new Date()
+  })
+
+  await interview.save()
+  res.json({ interview })
+}
+
+const deleteInterviewDocument = async (req, res) => {
+  const interview = await CmsInterview.findById(req.params.interviewId)
+  if (!interview) {
+    return res.status(404).json({ message: 'Interview not found' })
+  }
+
+  const nextDocuments = (interview.documents || []).filter((doc) => String(doc?._id) !== String(req.params.docId))
+  if (nextDocuments.length === (interview.documents || []).length) {
+    return res.status(404).json({ message: 'Document not found' })
+  }
+
+  interview.documents = nextDocuments
+  await interview.save()
+  res.json({ interview })
+}
+
+const viewInterviewDocument = async (req, res) => {
+  const interview = await CmsInterview.findById(req.params.interviewId).select('documents')
+  if (!interview) {
+    return res.status(404).json({ message: 'Interview not found' })
+  }
+
+  const doc = (interview.documents || []).find((item) => String(item?._id) === String(req.params.docId))
+  if (!doc) {
+    return res.status(404).json({ message: 'Document not found' })
+  }
+
+  const object = await getObjectFromS3(doc.fileUrl)
+  const contentType = doc.mimeType || object?.ContentType || 'application/octet-stream'
+  const contentLength = doc.size || object?.ContentLength
+  const fileName = doc.fileName || 'document'
+
+  res.setHeader('Content-Type', contentType)
+  res.setHeader('Content-Disposition', `inline; filename="${fileName.replace(/"/g, '')}"`)
+  if (contentLength) {
+    res.setHeader('Content-Length', String(contentLength))
+  }
+
+  const body = object?.Body
+  if (!body) {
+    return res.status(404).json({ message: 'Document stream not found' })
+  }
+
+  if (typeof body.pipe === 'function') {
+    body.on('error', (error) => {
+      res.destroy(error)
+    })
+    body.pipe(res)
+    return
+  }
+
+  const chunks = []
+  // Fallback for async iterable body.
+  // eslint-disable-next-line no-restricted-syntax
+  for await (const chunk of body) {
+    chunks.push(chunk)
+  }
+  res.end(Buffer.concat(chunks))
 }
 
 const updateCompany = async (req, res) => {
@@ -276,6 +624,35 @@ const deleteCompany = async (req, res) => {
   res.json({ message: 'Company deleted' })
 }
 
+const normalizeRatingForCompany = (value) => {
+  if (value === '' || value === null || value === undefined) return undefined
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return undefined
+  return Math.max(0, Math.min(5, numeric))
+}
+
+const interviewPayloadFromBody = (body = {}, candidate = null) => ({
+  candidateName: String(body.candidateName || candidate?.fullName || '').trim(),
+  companyName: String(body.companyName || '').trim(),
+  jobRole: String(body.jobRole || '').trim(),
+  reference: String(body.reference || '').trim(),
+  attendInterview: String(body.attendInterview || '').trim(),
+  interestedForJoin: String(body.interestedForJoin || '').trim(),
+  interviewDate: body.interviewDate || null,
+  selectionChances: String(body.selectionChances || '').trim(),
+  ratingForCompany: normalizeRatingForCompany(body.ratingForCompany),
+  notAttendRemark: String(body.notAttendRemark || '').trim(),
+  notInterestedReason: String(body.notInterestedReason || '').trim(),
+  replyFromCompany: String(body.replyFromCompany || '').trim(),
+  positiveFeedback: String(body.positiveFeedback || '').trim(),
+  negativeFeedback: String(body.negativeFeedback || '').trim(),
+  overallDiscussion: String(body.overallDiscussion || '').trim(),
+  note: String(body.note || '').trim(),
+  updatedBy: String(body.updatedBy || 'SJP HR').trim(),
+  remark: String(body.remark || body.overallDiscussion || '').trim(),
+  result: body.result || 'Pending'
+})
+
 const addInterview = async (req, res) => {
   const candidate = await CmsCandidate.findById(req.params.id)
   if (!candidate) {
@@ -284,11 +661,7 @@ const addInterview = async (req, res) => {
 
   const interview = await CmsInterview.create({
     candidateId: req.params.id,
-    companyName: req.body.companyName,
-    reference: req.body.reference,
-    interviewDate: req.body.interviewDate,
-    remark: req.body.remark,
-    result: req.body.result
+    ...interviewPayloadFromBody(req.body, candidate)
   })
 
   res.status(201).json(interview)
@@ -306,10 +679,9 @@ const updateInterview = async (req, res) => {
     return res.status(404).json({ message: 'Interview not found' })
   }
 
-  Object.entries(req.body || {}).forEach(([key, value]) => {
-    if (key !== '_id' && key !== 'candidateId') {
-      interview[key] = value
-    }
+  const patch = interviewPayloadFromBody(req.body)
+  Object.entries(patch).forEach(([key, value]) => {
+    interview[key] = value
   })
 
   await interview.save()
@@ -395,6 +767,7 @@ const updateRemarks = async (req, res) => {
   await Promise.all([touched.processRemarks ? remark.save() : Promise.resolve(), touched.successRemarks ? candidate.save() : Promise.resolve()])
   if (touched.successRemarks) {
     await syncCandidateFromCms(candidate)
+    invalidateReferenceCaches()
   }
 
   res.json({
@@ -411,6 +784,14 @@ module.exports = {
   getCandidateById,
   getCompanyById,
   updateCandidate,
+  uploadCandidateDocument,
+  deleteCandidateDocument,
+  viewCandidateDocument,
+  downloadSuccessRemarkPdf,
+  createSuccessRemarkShareLink,
+  uploadInterviewDocument,
+  deleteInterviewDocument,
+  viewInterviewDocument,
   updateCompany,
   deleteCandidate,
   deleteCompany,

@@ -5,26 +5,53 @@ const selectionStatuses = ['shortlisted', 'selected', 'joined', 'rejected', 'on_
 
 const candidateSchema = new mongoose.Schema(
   {
+    formMeta: {
+      day: String,
+      receiptNo: String,
+      rcWrc: String,
+      date: Date
+    },
     candidateName: {
       type: String,
       required: true,
       trim: true
     },
+    collegeName: String,
     mobileNumber: {
       type: String,
       required: true,
       trim: true
     },
     aadhaarNo: String,
+    panNo: String,
     whatsappNo: String,
     emailId: String,
+    gender: {
+      type: String,
+      enum: ['Male', 'Female', 'Other']
+    },
+    currentAge: Number,
+    currentAddress: String,
+    permanentAddress: String,
     appliedFor: String,
     interestedDepartment: String,
+    lookingForField: String,
     preferredIndustry: String,
     preferredJobLocation: String,
     education: String,
+    yearOfHigherEducation: String,
+    computerCourses: String,
+    otherAchievements: String,
+    placementReference: {
+      professorName: String,
+      professorContactNumber: String,
+      referenceBy: String,
+      referenceContactNumber: String
+    },
     totalExperience: Number,
+    experienceDepartment: String,
     currentCompany: String,
+    keyResponsibilities: String,
     careerSummary: String,
     currentSalary: String,
     expectedSalary: String,
@@ -36,10 +63,51 @@ const candidateSchema = new mongoose.Schema(
       type: String,
       enum: ['Married', 'Unmarried', 'Single']
     },
+    familyDetails: {
+      fatherOrHusbandName: String,
+      fatherOccupation: String,
+      fatherMobileNumber: String,
+      motherOrWifeName: String,
+      motherOccupation: String,
+      motherMobileNumber: String,
+      siblingName: String,
+      siblingEducationOccupation: String,
+      brotherOccupation: String,
+      sisterOccupation: String
+    },
+    goalAim: String,
+    feedback: String,
+    suggestion: String,
+    successInfo: {
+      hamiPatra: String,
+      concernLetter: String,
+      numberSave: String,
+      groupJoin: String,
+      bwType: String,
+      byWhichStaff: String,
+      candidateClass: String,
+      alternateNumbers: String,
+      relation: String,
+      reference: String,
+      referenceMobileNo: String,
+      whatsappChannelCommunity: String,
+      candidateDataSource: String,
+      googleForm: String,
+      justDialGoogleFeedback: String,
+      selectedVideoFeedbackVideo: String,
+      hrContactDetails: String,
+      candidatePhoto: String,
+      rcWrcStatus: String,
+      interviewAttainedList: String
+    },
     documents: [
       {
+        documentType: String,
+        documentLabel: String,
         fileName: String,
         fileUrl: String,
+        mimeType: String,
+        size: Number,
         uploadedAt: {
           type: Date,
           default: Date.now
@@ -69,6 +137,26 @@ const candidateSchema = new mongoose.Schema(
     selectionStatus: {
       type: String,
       enum: selectionStatuses
+    },
+    advisorCommission: {
+      salary: {
+        type: Number,
+        default: 0
+      },
+      percentage: {
+        type: Number,
+        default: 0
+      },
+      amount: {
+        type: Number,
+        default: 0
+      },
+      paymentStatus: {
+        type: String,
+        enum: ['pending', 'paid'],
+        default: 'pending'
+      },
+      paidAt: Date
     }
   },
   { timestamps: true, collection: 'candidates' }

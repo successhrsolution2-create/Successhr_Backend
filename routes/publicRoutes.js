@@ -1,7 +1,9 @@
 const express = require('express')
 const rateLimit = require('express-rate-limit')
-const { getAdvisorByCode, submitApplication } = require('../controllers/publicController')
+const { getAdvisorByCode, submitApplication, downloadSharedSuccessRemarkPdf } = require('../controllers/publicController')
 const { cache } = require('../src/middleware/cache')
+const { candidateDocumentUpload } = require('../middleware/uploadMiddleware')
+const { candidateDocumentUploadFields } = require('../utils/candidateDocuments')
 
 const router = express.Router()
 
@@ -17,8 +19,15 @@ const submitLimiter = rateLimit({
   message: { message: 'Too many submissions from this connection.' }
 })
 
+const pdfLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { message: 'Too many PDF requests. Please wait a moment.' }
+})
+
 router.get('/advisor/:code', codeLookupLimiter, cache(120), getAdvisorByCode)
-router.post('/apply', submitLimiter, submitApplication)
-router.post('/apply/:code', submitLimiter, submitApplication)
+router.get('/candidates/success-remark/:token.pdf', pdfLimiter, downloadSharedSuccessRemarkPdf)
+router.post('/apply', submitLimiter, candidateDocumentUpload.fields(candidateDocumentUploadFields), submitApplication)
+router.post('/apply/:code', submitLimiter, candidateDocumentUpload.fields(candidateDocumentUploadFields), submitApplication)
 
 module.exports = router

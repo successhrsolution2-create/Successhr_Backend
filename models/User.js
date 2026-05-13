@@ -40,8 +40,6 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 )
 
-userSchema.index({ advisorCode: 1 }, { unique: true, sparse: true })
-
 userSchema.set('toJSON', {
   transform(_doc, ret) {
     delete ret.password

@@ -7,7 +7,7 @@ const parseDbName = (uri, fallback) => {
   try {
     const parsed = new URL(uri)
     return (parsed.pathname || '').replace(/^\//, '') || fallback
-  } catch (_error) {
+  } catch (_error) {s
     return fallback
   }
 }

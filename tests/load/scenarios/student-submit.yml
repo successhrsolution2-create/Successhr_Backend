@@ -1,0 +1,22 @@
+config:
+  target: "http://localhost:5000"
+  variables:
+    baToken: "{{ $env.BA_TOKEN }}"
+  phases:
+    - duration: 60
+      arrivalRate: 10
+  plugins:
+    expect: {}
+
+scenarios:
+  - name: "BA student submit"
+    flow:
+      - post:
+          url: "/api/students"
+          headers:
+            Authorization: "Bearer {{ baToken }}"
+          json:
+            candidateName: "Scenario Student {{ $randomString() }}"
+            mobileNumber: "97{{ $randomNumber(10000000, 99999999) }}"
+          expect:
+            - statusCode: 201

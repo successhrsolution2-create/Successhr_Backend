@@ -1,0 +1,83 @@
+config:
+  target: "http://localhost:5000"
+  phases:
+    - name: "Warm up"
+      duration: 30
+      arrivalRate: 5
+    - name: "Ramp up"
+      duration: 60
+      arrivalRate: 5
+      rampTo: 50
+    - name: "Sustained load"
+      duration: 120
+      arrivalRate: 50
+    - name: "Spike"
+      duration: 30
+      arrivalRate: 200
+  variables:
+    adminToken: "{{ $env.ADMIN_TOKEN }}"
+    baToken: "{{ $env.BA_TOKEN }}"
+  plugins:
+    expect: {}
+  ensure:
+    p95: 500
+    p99: 1000
+    maxErrorRate: 1
+
+scenarios:
+  - name: "Public apply form - anonymous"
+    weight: 40
+    flow:
+      - get:
+          url: "/api/public/advisor/successba01"
+          expect:
+            - statusCode: 200
+            - hasProperty: "advisorName"
+      - post:
+          url: "/api/public/apply/successba01"
+          json:
+            candidateName: "Load Test Candidate {{ $randomString() }}"
+            mobileNumber: "98{{ $randomNumber(10000000, 99999999) }}"
+          expect:
+            - statusCode: 201
+
+  - name: "Admin reference board"
+    weight: 30
+    flow:
+      - get:
+          url: "/api/students"
+          headers:
+            Authorization: "Bearer {{ adminToken }}"
+          expect:
+            - statusCode: 200
+      - get:
+          url: "/api/companies"
+          headers:
+            Authorization: "Bearer {{ adminToken }}"
+          expect:
+            - statusCode: 200
+
+  - name: "BA submits student"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/students"
+          headers:
+            Authorization: "Bearer {{ baToken }}"
+          json:
+            candidateName: "Load Test {{ $randomString() }}"
+            mobileNumber: "97{{ $randomNumber(10000000, 99999999) }}"
+          expect:
+            - statusCode: 201
+
+  - name: "Login flow"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "ba@test.com"
+            password: "BA@123"
+          expect:
+            - statusCode: 200
+            - hasProperty: "token"

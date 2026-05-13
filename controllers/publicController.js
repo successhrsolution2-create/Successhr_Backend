@@ -3,7 +3,18 @@ const CmsCandidate = require('../models/cms/CmsCandidate')
 const CmsRemark = require('../models/cms/CmsRemark')
 const BusinessAdvisor = require('../models/BusinessAdvisor')
 const User = require('../models/User')
+const jwt = require('jsonwebtoken')
 const { nextCandidateCode } = require('../utils/cmsCandidateCode')
+const { invalidateCache } = require('../src/utils/invalidateCache')
+const { uploadToS3 } = require('../utils/s3Upload')
+const { validateUploadFile } = require('../utils/fileValidation')
+const { generateSuccessRemarkPdf, successRemarkPdfFileName } = require('../utils/successRemarkPdf')
+const {
+  candidateDocumentAllowedExtensionsByKey,
+  candidateDocumentAllowedMimeTypesByKey,
+  candidateDocumentLabelByKey,
+  isCandidateDocumentKey
+} = require('../utils/candidateDocuments')
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
@@ -12,6 +23,12 @@ const parseOptionalNumber = (value) => {
   if (value === '' || value === undefined || value === null) return undefined
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : undefined
+}
+const text = (value) => String(value || '').trim()
+const normalizePan = (value) => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+const pickOption = (value, options) => {
+  const normalized = String(value || '').trim()
+  return options.includes(normalized) ? normalized : undefined
 }
 
 const remarkKeys = [
@@ -46,17 +63,66 @@ const defaultCheckboxes = () =>
 const normalizeApplicationPayload = (body) => {
   const payload = { ...body }
 
+  payload.formMeta = {
+    day: text(payload.formMeta?.day),
+    receiptNo: text(payload.formMeta?.receiptNo),
+    rcWrc: text(payload.formMeta?.rcWrc),
+    date: payload.formMeta?.date || undefined
+  }
   payload.candidateName = String(payload.candidateName || '').trim()
+  payload.collegeName = text(payload.collegeName)
   payload.mobileNumber = toDigits(payload.mobileNumber)
   payload.whatsappNo = toDigits(payload.whatsappNo) || undefined
   payload.aadhaarNo = toDigits(payload.aadhaarNo) || undefined
+  payload.panNo = normalizePan(payload.panNo) || undefined
   payload.emailId = normalizeEmail(payload.emailId) || undefined
+  payload.gender = pickOption(payload.gender, ['Male', 'Female', 'Other'])
+  payload.currentAge = parseOptionalNumber(payload.currentAge)
+  payload.currentAddress = text(payload.currentAddress)
+  payload.permanentAddress = text(payload.permanentAddress)
+  payload.education = text(payload.education)
+  payload.yearOfHigherEducation = text(payload.yearOfHigherEducation)
+  payload.computerCourses = text(payload.computerCourses)
+  payload.otherAchievements = text(payload.otherAchievements)
+  payload.placementReference = {
+    professorName: text(payload.professorName || payload.placementReference?.professorName),
+    professorContactNumber: toDigits(payload.professorContactNumber || payload.placementReference?.professorContactNumber) || undefined,
+    referenceBy: text(payload.referenceBy || payload.placementReference?.referenceBy),
+    referenceContactNumber: toDigits(payload.referenceContactNumber || payload.placementReference?.referenceContactNumber) || undefined
+  }
 
   payload.totalExperience = parseOptionalNumber(payload.totalExperience)
+  payload.experienceDepartment = text(payload.experienceDepartment)
+  payload.currentCompany = text(payload.currentCompany)
+  payload.keyResponsibilities = text(payload.keyResponsibilities)
+  payload.currentSalary = text(payload.currentSalary)
+  payload.expectedSalary = text(payload.expectedSalary)
   payload.noticePeriod = parseOptionalNumber(payload.noticePeriod)
-  if (!['Married', 'Unmarried', 'Single'].includes(String(payload.marriageStatus || ''))) {
-    payload.marriageStatus = undefined
+  payload.careerSummary = text(payload.careerSummary)
+  payload.reasonForJobChange = text(payload.reasonForJobChange)
+  payload.appliedFor = text(payload.appliedFor)
+  payload.interestedDepartment = text(payload.interestedDepartment)
+  payload.lookingForField = text(payload.lookingForField)
+  payload.preferredIndustry = text(payload.preferredIndustry)
+  payload.preferredJobLocation = text(payload.preferredJobLocation)
+  payload.currentJobLocation = text(payload.currentJobLocation)
+  payload.availabilityForInterview = text(payload.availabilityForInterview)
+  payload.familyDetails = {
+    fatherOrHusbandName: text(payload.fatherOrHusbandName || payload.familyDetails?.fatherOrHusbandName),
+    fatherOccupation: text(payload.fatherOccupation || payload.familyDetails?.fatherOccupation),
+    fatherMobileNumber: toDigits(payload.fatherMobileNumber || payload.familyDetails?.fatherMobileNumber) || undefined,
+    motherOrWifeName: text(payload.motherOrWifeName || payload.familyDetails?.motherOrWifeName),
+    motherOccupation: text(payload.motherOccupation || payload.familyDetails?.motherOccupation),
+    motherMobileNumber: toDigits(payload.motherMobileNumber || payload.familyDetails?.motherMobileNumber) || undefined,
+    siblingName: text(payload.siblingName || payload.familyDetails?.siblingName),
+    siblingEducationOccupation: text(payload.siblingEducationOccupation || payload.familyDetails?.siblingEducationOccupation),
+    brotherOccupation: text(payload.familyDetails?.brotherOccupation),
+    sisterOccupation: text(payload.familyDetails?.sisterOccupation)
   }
+  payload.goalAim = text(payload.goalAim)
+  payload.feedback = text(payload.feedback)
+  payload.suggestion = text(payload.suggestion)
+  payload.marriageStatus = pickOption(payload.marriageStatus, ['Married', 'Unmarried', 'Single'])
 
   if (!payload.candidateName || !payload.mobileNumber) {
     const error = new Error('Candidate name and mobile number are required')
@@ -82,13 +148,56 @@ const normalizeApplicationPayload = (body) => {
     throw error
   }
 
+  if (payload.panNo && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(payload.panNo)) {
+    const error = new Error('Enter a valid PAN number')
+    error.statusCode = 400
+    throw error
+  }
+
   if (payload.emailId && !emailRegex.test(payload.emailId)) {
     const error = new Error('Enter a valid email')
     error.statusCode = 400
     throw error
   }
 
+  const contactChecks = [
+    [payload.placementReference.professorContactNumber, 'Professor / Staff / TPO contact number'],
+    [payload.placementReference.referenceContactNumber, 'Reference contact number'],
+    [payload.familyDetails.fatherMobileNumber, 'Father mobile number'],
+    [payload.familyDetails.motherMobileNumber, 'Mother mobile number']
+  ]
+
+  for (const [value, label] of contactChecks) {
+    if (value && value.length !== 10) {
+      const error = new Error(`${label} must be 10 digits`)
+      error.statusCode = 400
+      throw error
+    }
+  }
+
   return payload
+}
+
+const ensureUniqueApplicationIdentity = async (payload) => {
+  const checks = [
+    { field: 'mobileNumber', label: 'mobile number', value: payload.mobileNumber },
+    { field: 'emailId', label: 'email', value: payload.emailId },
+    { field: 'aadhaarNo', label: 'aadhaar number', value: payload.aadhaarNo },
+    { field: 'panNo', label: 'PAN number', value: payload.panNo }
+  ].filter((item) => item.value)
+
+  for (const check of checks) {
+    const [existingCandidate, existingCmsCandidate] = await Promise.all([
+      Candidate.findOne({ [check.field]: check.value }).select('_id'),
+      CmsCandidate.findOne({ [check.field]: check.value }).select('_id')
+    ])
+
+    if (existingCandidate || existingCmsCandidate) {
+      const error = new Error(`A candidate with this ${check.label} already exists`)
+      error.statusCode = 409
+      throw error
+    }
+  }
 }
 
 const findAdvisorByCode = async (code) =>
@@ -124,6 +233,46 @@ const resolveAdvisorDisplayName = async (advisor) => {
   return advisor?.email || advisor?.advisorCode || null
 }
 
+const invalidateReferenceCaches = () => {
+  invalidateCache('/api/candidates').catch(() => {})
+  invalidateCache('/api/students').catch(() => {})
+}
+
+const normalizeDocumentFieldName = (fieldName) =>
+  String(fieldName || '').startsWith('documents.')
+    ? String(fieldName || '').slice('documents.'.length)
+    : String(fieldName || '')
+
+const uploadApplicationDocuments = async (filesByField = {}) => {
+  const documents = []
+
+  for (const [fieldName, files] of Object.entries(filesByField || {})) {
+    const documentType = normalizeDocumentFieldName(fieldName)
+    if (!isCandidateDocumentKey(documentType)) continue
+
+    for (const file of files || []) {
+      validateUploadFile(file, {
+        allowedMimeTypes: candidateDocumentAllowedMimeTypesByKey[documentType],
+        allowedExtensions: candidateDocumentAllowedExtensionsByKey[documentType],
+        typeMessage: 'File type is not allowed for this document',
+        extensionMessage: 'File extension is not allowed for this document'
+      })
+      const fileUrl = await uploadToS3(file, 'candidate-documents')
+      documents.push({
+        documentType,
+        documentLabel: candidateDocumentLabelByKey[documentType],
+        fileName: file.originalname,
+        fileUrl,
+        mimeType: file.mimetype,
+        size: file.size,
+        uploadedAt: new Date()
+      })
+    }
+  }
+
+  return documents
+}
+
 const getAdvisorByCode = async (req, res) => {
   const code = String(req.params.code || '').trim().toLowerCase()
 
@@ -157,20 +306,33 @@ const getAdvisorByCode = async (req, res) => {
   })
 }
 
-const createCmsCandidate = async (payload, superAdmin, advisor) => {
+const createCmsCandidate = async (payload, superAdmin, advisor, sourceCandidate = null) => {
   const advisorName = advisor ? await resolveAdvisorDisplayName(advisor) : null
   const candidateCode = await nextCandidateCode(new Date())
   const cmsCandidate = await CmsCandidate.create({
     candidateCode,
+    sourceCandidateId: sourceCandidate?._id || null,
+    formMeta: payload.formMeta,
     fullName: payload.candidateName,
+    collegeName: payload.collegeName,
     mobileNumber: payload.mobileNumber,
     aadhaarNo: payload.aadhaarNo,
+    panNo: payload.panNo,
     whatsappNo: payload.whatsappNo,
     emailId: payload.emailId,
+    gender: payload.gender,
+    currentAge: payload.currentAge,
+    currentAddress: payload.currentAddress,
+    permanentAddress: payload.permanentAddress,
     education: payload.education,
+    yearOfHigherEducation: payload.yearOfHigherEducation,
+    computerCourses: payload.computerCourses,
+    otherAchievements: payload.otherAchievements,
     specialization: payload.interestedDepartment,
     totalExperience: payload.totalExperience,
+    experienceDepartment: payload.experienceDepartment,
     currentCompany: payload.currentCompany,
+    keyResponsibilities: payload.keyResponsibilities,
     careerSummary: payload.careerSummary,
     currentDesignation: payload.appliedFor || undefined,
     currentSalary: payload.currentSalary,
@@ -180,11 +342,18 @@ const createCmsCandidate = async (payload, superAdmin, advisor) => {
     marriageStatus: payload.marriageStatus,
     appliedFor: payload.appliedFor,
     interestedDepartment: payload.interestedDepartment,
+    lookingForField: payload.lookingForField,
     preferredIndustry: payload.preferredIndustry,
     preferredJobLocation: payload.preferredJobLocation,
     availabilityForInterview: payload.availabilityForInterview,
     reasonForJobChange: payload.reasonForJobChange,
     currentJobLocation: payload.currentJobLocation,
+    placementReference: payload.placementReference,
+    familyDetails: payload.familyDetails,
+    goalAim: payload.goalAim,
+    feedback: payload.feedback,
+    suggestion: payload.suggestion,
+    documents: payload.documents || [],
     source: 'public_form',
     intakeType: advisor ? 'advisor' : 'walkin',
     advisor: advisor?._id || null,
@@ -217,7 +386,7 @@ const submitToAdvisorFlow = async (req, res, payload, advisor, superAdmin) => {
     priorityOrder: 0
   })
 
-  const cmsCandidate = await createCmsCandidate(payload, superAdmin, advisor)
+  const cmsCandidate = await createCmsCandidate(payload, superAdmin, advisor, student)
 
   const io = req.app.get('io')
   const studentObject = student.toObject()
@@ -235,6 +404,8 @@ const submitToAdvisorFlow = async (req, res, payload, advisor, superAdmin) => {
     })
   }
 
+  invalidateReferenceCaches()
+
   return res.status(201).json({
     message: 'Application submitted successfully',
     studentId: student._id,
@@ -244,8 +415,7 @@ const submitToAdvisorFlow = async (req, res, payload, advisor, superAdmin) => {
   })
 }
 
-const submitToCmsFlow = async (res, payload) => {
-  const superAdmin = await findActiveSuperAdmin()
+const submitToCmsFlow = async (res, payload, superAdmin) => {
   if (!superAdmin) {
     return res.status(500).json({ message: 'No active super admin found for direct submission' })
   }
@@ -262,10 +432,12 @@ const submitToCmsFlow = async (res, payload) => {
 
 const submitApplication = async (req, res) => {
   const payload = normalizeApplicationPayload(req.body || {})
+  await ensureUniqueApplicationIdentity(payload)
   const superAdmin = await findActiveSuperAdmin()
   if (!superAdmin) {
     return res.status(500).json({ message: 'No active super admin found for candidate management submission' })
   }
+  payload.documents = await uploadApplicationDocuments(req.files)
 
   const paramCode = String(req.params.code || '').trim().toLowerCase()
   const bodyCode = String(req.body?.advisorCode || '').trim().toLowerCase()
@@ -279,7 +451,33 @@ const submitApplication = async (req, res) => {
     }
   }
 
-  return submitToCmsFlow(res, payload)
+  return submitToCmsFlow(res, payload, superAdmin)
 }
 
-module.exports = { getAdvisorByCode, submitApplication }
+const downloadSharedSuccessRemarkPdf = async (req, res) => {
+  let decoded
+  try {
+    decoded = jwt.verify(req.params.token, process.env.JWT_SECRET)
+  } catch (_error) {
+    return res.status(401).json({ message: 'Invalid or expired PDF link' })
+  }
+
+  if (decoded?.purpose !== 'success-remark-pdf' || !decoded?.candidateId) {
+    return res.status(401).json({ message: 'Invalid PDF link' })
+  }
+
+  const candidate = await CmsCandidate.findById(decoded.candidateId)
+  if (!candidate) {
+    return res.status(404).json({ message: 'Candidate not found' })
+  }
+
+  const buffer = generateSuccessRemarkPdf(candidate)
+  const fileName = successRemarkPdfFileName(candidate).replace(/"/g, '')
+
+  res.setHeader('Content-Type', 'application/pdf')
+  res.setHeader('Content-Length', String(buffer.length))
+  res.setHeader('Content-Disposition', `inline; filename="${fileName}"`)
+  res.end(buffer)
+}
+
+module.exports = { getAdvisorByCode, submitApplication, downloadSharedSuccessRemarkPdf }
