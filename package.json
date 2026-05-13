@@ -8,6 +8,7 @@
     "start": "node server.js",
     "migrate:atlas": "node scripts/migrate-local-to-atlas.js",
     "migrate:candidates": "node scripts/migrate-candidates.js",
+    "cleanup:public-apply": "node scripts/cleanup-public-apply-orphans.js",
     "test": "jest --runInBand",
     "test:unit": "jest tests/unit --runInBand",
     "test:integration": "jest tests/integration --runInBand",
