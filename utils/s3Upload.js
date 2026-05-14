@@ -1,4 +1,7 @@
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3')
+const fs = require('fs')
+const fsp = require('fs/promises')
+const path = require('path')
 
 const requiredEnv = ['AWS_REGION', 'AWS_S3_BUCKET']
 
@@ -50,6 +53,36 @@ const s3Client = buildS3Client()
 const sanitizeName = (name) => String(name || 'file').replace(/[^a-zA-Z0-9.-]/g, '_')
 const trimSlashes = (value) => String(value || '').replace(/^\/+|\/+$/g, '')
 const normalizeEndpoint = (value) => String(value || '').trim().replace(/\/$/, '')
+const localUploadRoot = path.join(__dirname, '..', 'uploads')
+const localUploadUrlPrefix = '/uploads'
+
+const isLocalUploadUrl = (value) => String(value || '').startsWith(`${localUploadUrlPrefix}/`)
+
+const localContentType = (filePath) => {
+  const ext = path.extname(filePath || '').toLowerCase()
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
+  if (ext === '.png') return 'image/png'
+  if (ext === '.pdf') return 'application/pdf'
+  return 'application/octet-stream'
+}
+
+const uploadToLocalDisk = async (file, folder = 'uploads') => {
+  if (!file?.buffer) {
+    const error = new Error('Invalid file payload for upload')
+    error.statusCode = 400
+    throw error
+  }
+
+  const safeFolder = sanitizeName(folder)
+  const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}-${sanitizeName(file.originalname)}`
+  const uploadDir = path.join(localUploadRoot, safeFolder)
+  const uploadPath = path.join(uploadDir, fileName)
+
+  await fsp.mkdir(uploadDir, { recursive: true })
+  await fsp.writeFile(uploadPath, file.buffer)
+
+  return `${localUploadUrlPrefix}/${safeFolder}/${fileName}`
+}
 
 const s3KeyFromFileUrl = (fileUrl) => {
   const raw = String(fileUrl || '').trim()
@@ -81,7 +114,7 @@ const s3KeyFromFileUrl = (fileUrl) => {
 const uploadToS3 = async (file, folder = 'uploads') => {
   const missing = getMissing()
   if (missing.length) {
-    throw storageConfigError(`Missing S3 env vars: ${missing.join(', ')}`)
+    return uploadToLocalDisk(file, folder)
   }
 
   if (!file?.buffer) {
@@ -147,6 +180,23 @@ const uploadToS3 = async (file, folder = 'uploads') => {
 module.exports = {
   uploadToS3,
   getObjectFromS3: async (fileUrlOrKey) => {
+    if (isLocalUploadUrl(fileUrlOrKey)) {
+      const relativePath = trimSlashes(String(fileUrlOrKey).slice(localUploadUrlPrefix.length))
+      const filePath = path.resolve(localUploadRoot, relativePath)
+      if (!filePath.startsWith(path.resolve(localUploadRoot) + path.sep)) {
+        const error = new Error('Invalid local file path')
+        error.statusCode = 400
+        throw error
+      }
+
+      const stat = await fsp.stat(filePath)
+      return {
+        Body: fs.createReadStream(filePath),
+        ContentType: localContentType(filePath),
+        ContentLength: stat.size
+      }
+    }
+
     const missing = getMissing()
     if (missing.length) {
       throw storageConfigError(`Missing S3 env vars: ${missing.join(', ')}`)

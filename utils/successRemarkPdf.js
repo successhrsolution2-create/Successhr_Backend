@@ -206,54 +206,36 @@ const generateSuccessRemarkPdf = (candidateDoc) => {
   const drawQuestions = () => {
     const rows = buildQuestionRows(interviewForm.questions)
     const result = calculateQuestionMarksResult(interviewForm.questions)
-    const questionRowStartOffset = 98
+    const questionRowStartOffset = 62
     const questionRowHeight = 25
-    const questionBottomPadding = 16
+    const questionBottomPadding = 42
     const questionHeight = questionRowStartOffset + rows.length * questionRowHeight + questionBottomPadding
-    ensureSpace(questionHeight + 66)
+    ensureSpace(questionHeight + 18)
     drawRect(margin, y, pageWidth - margin * 2, questionHeight, { stroke: [0.06, 0.09, 0.16], lineWidth: 1.4 })
-    drawText('Candidate Name -', margin + 18, y + 24, { size: 12, bold: true, maxWidth: 115 })
-    drawText(candidate.fullName, margin + 145, y + 24, { size: 10.5, bold: true, maxWidth: pageWidth - margin * 2 - 170 })
-    drawLine(margin + 145, y + 42, pageWidth - margin - 18, y + 42, [0.06, 0.09, 0.16], 1)
     const titleW = 160
-    drawRect((pageWidth - titleW) / 2, y + 62, titleW, 22, { stroke: [0.06, 0.09, 0.16], fill: [0.06, 0.09, 0.16] })
-    drawText('Interview Questions', (pageWidth - titleW) / 2 + 8, y + 66, { size: 12, bold: true, fill: [1, 1, 1], maxWidth: titleW - 16 })
+    drawRect((pageWidth - titleW) / 2, y + 18, titleW, 22, { stroke: [0.06, 0.09, 0.16], fill: [0.06, 0.09, 0.16] })
+    drawText('Interview Questions', (pageWidth - titleW) / 2 + 8, y + 22, { size: 12, bold: true, fill: [1, 1, 1], maxWidth: titleW - 16 })
     let rowY = y + questionRowStartOffset
     rows.forEach((row, index) => {
       drawText(`${index + 1}.`, margin + 18, rowY + 5, { size: 10, bold: true, maxWidth: 26 })
-      drawText(row.question, margin + 52, rowY + 5, { size: 9, bold: true, maxWidth: pageWidth - margin * 2 - 210 })
-      drawLine(margin + 52, rowY + 21, pageWidth - margin - 150, rowY + 21, [0.06, 0.09, 0.16], 0.8)
-      const choiceX = pageWidth - margin - 138
-      QUESTION_CHOICES.forEach((choice, choiceIndex) => {
-        const x = choiceX + choiceIndex * 46
-        drawRect(x, rowY, 46, 22, { stroke: [0.06, 0.09, 0.16] })
-        drawCheckbox(x + 10, rowY + 6, isSelected(row.choices, choice))
-        drawText(choice, x + 25, rowY + 5, { size: 9, bold: true, maxWidth: 15 })
-      })
+      drawText(row.question, margin + 52, rowY + 5, { size: 9, bold: true, maxWidth: pageWidth - margin * 2 - 180 })
+      drawLine(margin + 52, rowY + 21, pageWidth - margin - 118, rowY + 21, [0.06, 0.09, 0.16], 0.8)
+      const marksX = pageWidth - margin - 96
+      drawRect(marksX, rowY, 78, 22, { stroke: [0.06, 0.09, 0.16] })
+      drawText(row.marks ? `${row.marks}/10` : '/10', marksX + 16, rowY + 5, { size: 9, bold: true, maxWidth: 50 })
       rowY += questionRowHeight
     })
+    drawText(`Total Marks: ${result.total}/${result.maxTotal}`, pageWidth - margin - 170, rowY + 10, { size: 11, bold: true, fill: [0.02, 0.23, 0.42], maxWidth: 150 })
     y += questionHeight + 18
-
-    const columns = result.rows.length + 2
-    const tableW = pageWidth - margin * 2
-    const cellW = tableW / columns
-    const tableY = y
-    drawRect(margin, tableY, tableW, 48, { stroke: [0.06, 0.09, 0.16], lineWidth: 1 })
-    drawLine(margin, tableY + 24, margin + tableW, tableY + 24)
-    Array.from({ length: columns + 1 }, (_, index) => margin + index * cellW).forEach((x) => drawLine(x, tableY, x, tableY + 48))
-    drawText('IQ', margin + 10, tableY + 7, { size: 10.5, bold: true, maxWidth: cellW - 20 })
-    result.rows.forEach((_row, index) => drawText(index + 1, margin + (index + 1) * cellW + cellW / 2 - 4, tableY + 7, { size: 10.5, bold: true, maxWidth: cellW - 8 }))
-    drawText('TQ', margin + (columns - 1) * cellW + 10, tableY + 7, { size: 10.5, bold: true, maxWidth: cellW - 20 })
-    drawText('Marks', margin + 8, tableY + 31, { size: 10.5, bold: true, maxWidth: cellW - 16 })
-    result.rows.forEach((row, index) => drawText(row.marks, margin + (index + 1) * cellW + cellW / 2 - 6, tableY + 31, { size: 9.5, bold: true, maxWidth: cellW - 8 }))
-    drawText(`${result.total}/${result.maxTotal}`, margin + (columns - 1) * cellW + 8, tableY + 31, { size: 9.5, bold: true, maxWidth: cellW - 16 })
-    y += 64
   }
 
   drawText('Success Interviewer Remark', margin, y, { size: 16, bold: true, maxWidth: 360 })
   y += 29
   drawLine(margin, y, pageWidth - margin, y, [0.89, 0.92, 0.96], 0.8)
   y += 22
+  drawText('Candidate Name -', margin, y, { size: 12, bold: true, maxWidth: 115 })
+  drawText(candidate.fullName, margin + 125, y, { size: 11, bold: true, maxWidth: pageWidth - margin * 2 - 150 })
+  y += 28
   const gap = 16
   const panelW = (pageWidth - margin * 2 - gap) / 2
   const panelHeight = drawRatingPanel('Professional Assessment', PROFESSIONAL_RATING_FIELDS, interviewForm.professionalRatings, margin, y, panelW)

@@ -1,7 +1,16 @@
 const bcrypt = require('bcryptjs')
 const User = require('../models/User')
 const BusinessAdvisor = require('../models/BusinessAdvisor')
+const { invalidateCache } = require('../src/utils/invalidateCache')
 const generateAdvisorCode = require('../utils/generateAdvisorCode')
+
+const invalidateBusinessAdvisorCaches = (userId) =>
+  Promise.all([
+    invalidateCache('/api/ba/all').catch(() => 0),
+    invalidateCache('/api/ba/profile').catch(() => 0),
+    userId ? invalidateCache(`/api/ba/profile/${userId}`).catch(() => 0) : Promise.resolve(0),
+    userId ? invalidateCache(`/api/ba/${userId}/public-form-count`).catch(() => 0) : Promise.resolve(0)
+  ])
 
 const assignAdvisorCode = async (user) => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -124,6 +133,7 @@ const createBusinessAdvisor = async (req, res) => {
   profile.isProfileComplete = isProfileComplete(profile)
   await profile.save()
 
+  await invalidateBusinessAdvisorCaches(user._id)
   res.status(201).json({ user, profile })
 }
 
@@ -158,6 +168,7 @@ const updateBusinessAdvisorUser = async (req, res) => {
     await BusinessAdvisor.findOneAndUpdate({ userId: user._id }, { $set: profileUpdates })
   }
 
+  await invalidateBusinessAdvisorCaches(user._id)
   res.json({ user })
 }
 
@@ -177,6 +188,7 @@ const resetBusinessAdvisorPassword = async (req, res) => {
   user.password = await bcrypt.hash(newPassword, 10)
   await user.save()
 
+  await invalidateBusinessAdvisorCaches(user._id)
   res.json({ message: 'Password reset successfully' })
 }
 
@@ -190,6 +202,7 @@ const deleteBusinessAdvisorUser = async (req, res) => {
   await BusinessAdvisor.deleteOne({ userId: user._id })
   await user.deleteOne()
 
+  await invalidateBusinessAdvisorCaches(user._id)
   res.json({ message: 'Business Advisor removed' })
 }
 

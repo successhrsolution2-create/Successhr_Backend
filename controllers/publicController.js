@@ -31,6 +31,18 @@ const pickOption = (value, options) => {
   return options.includes(normalized) ? normalized : undefined
 }
 
+const parseApplicationDetails = (value) => {
+  if (!value) return {}
+  if (typeof value === 'object') return value
+
+  try {
+    const parsed = JSON.parse(String(value))
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (_error) {
+    return {}
+  }
+}
+
 const remarkKeys = [
   'documentsSubmitted',
   'offerLetterReceived',
@@ -76,6 +88,7 @@ const normalizeApplicationPayload = (body) => {
   payload.aadhaarNo = toDigits(payload.aadhaarNo) || undefined
   payload.panNo = normalizePan(payload.panNo) || undefined
   payload.emailId = normalizeEmail(payload.emailId) || undefined
+  payload.dateOfBirth = payload.dateOfBirth || undefined
   payload.gender = pickOption(payload.gender, ['Male', 'Female', 'Other'])
   payload.currentAge = parseOptionalNumber(payload.currentAge)
   payload.currentAddress = text(payload.currentAddress)
@@ -122,7 +135,8 @@ const normalizeApplicationPayload = (body) => {
   payload.goalAim = text(payload.goalAim)
   payload.feedback = text(payload.feedback)
   payload.suggestion = text(payload.suggestion)
-  payload.marriageStatus = pickOption(payload.marriageStatus, ['Married', 'Unmarried', 'Single'])
+  payload.marriageStatus = pickOption(payload.marriageStatus, ['Married', 'Unmarried', 'Single', 'Widow'])
+  payload.applicationDetails = parseApplicationDetails(payload.applicationDetails)
 
   if (!payload.candidateName || !payload.mobileNumber) {
     const error = new Error('Candidate name and mobile number are required')
@@ -320,6 +334,7 @@ const createCmsCandidate = async (payload, superAdmin, advisor, sourceCandidate 
     panNo: payload.panNo,
     whatsappNo: payload.whatsappNo,
     emailId: payload.emailId,
+    dateOfBirth: payload.dateOfBirth,
     gender: payload.gender,
     currentAge: payload.currentAge,
     currentAddress: payload.currentAddress,
@@ -350,6 +365,7 @@ const createCmsCandidate = async (payload, superAdmin, advisor, sourceCandidate 
     currentJobLocation: payload.currentJobLocation,
     placementReference: payload.placementReference,
     familyDetails: payload.familyDetails,
+    applicationDetails: payload.applicationDetails,
     goalAim: payload.goalAim,
     feedback: payload.feedback,
     suggestion: payload.suggestion,

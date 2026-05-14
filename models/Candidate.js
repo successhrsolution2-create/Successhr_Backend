@@ -61,7 +61,7 @@ const candidateSchema = new mongoose.Schema(
     availabilityForInterview: String,
     marriageStatus: {
       type: String,
-      enum: ['Married', 'Unmarried', 'Single']
+      enum: ['Married', 'Unmarried', 'Single', 'Widow']
     },
     familyDetails: {
       fatherOrHusbandName: String,

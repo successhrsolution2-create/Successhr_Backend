@@ -68,10 +68,11 @@ const candidateConflict = (message) => {
   return error
 }
 
-const invalidateCandidateCaches = () => {
-  invalidateCache('/api/candidates').catch(() => {})
-  invalidateCache('/api/students').catch(() => {})
-}
+const invalidateCandidateCaches = () =>
+  Promise.all([
+    invalidateCache('/api/candidates').catch(() => 0),
+    invalidateCache('/api/students').catch(() => 0)
+  ])
 
 const normalizeCandidateIdentity = (payload) => {
   const normalizedMobile = toDigits(payload.mobileNumber)
@@ -329,10 +330,11 @@ const createCandidate = async (req, res) => {
 
   candidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
   await mirrorCandidateToCms(candidate, req.user, existingCmsCandidate)
+  await invalidateCandidateCaches()
+
   emitCandidateEvent('new_candidate', 'candidate_updated', ownerUserId(candidate), candidate)
   emitCandidateEvent('new_student', 'student_updated', ownerUserId(candidate), candidate)
 
-  invalidateCandidateCaches()
   res.status(201).json(candidate)
 }
 
@@ -385,11 +387,11 @@ const updateCandidate = async (req, res) => {
   await candidate.save()
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
   await syncCmsFromCandidate(savedCandidate)
+  await invalidateCandidateCaches()
 
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
-  invalidateCandidateCaches()
   res.json(savedCandidate)
 }
 
@@ -421,6 +423,12 @@ const deleteCandidate = async (req, res) => {
 
   await candidate.deleteOne()
 
+  await Promise.all([
+    invalidateCandidateCaches(),
+    invalidateCache('/api/placements').catch(() => 0),
+    invalidateCache('/api/placements/summary').catch(() => 0)
+  ])
+
   emitCandidateEvent('candidate_deleted', 'candidate_deleted', ownerId, { id: deletedId })
   emitCandidateEvent('student_deleted', 'student_deleted', ownerId, { id: deletedId })
   linkedPlacements.forEach((placement) => {
@@ -432,9 +440,6 @@ const deleteCandidate = async (req, res) => {
     emitToBA(placement.baId, 'placement_deleted', { ...payload, studentId: deletedId })
   })
 
-  invalidateCandidateCaches()
-  invalidateCache('/api/placements').catch(() => {})
-  invalidateCache('/api/placements/summary').catch(() => {})
   res.json({ message: 'Candidate reference deleted' })
 }
 
@@ -468,11 +473,11 @@ const uploadCandidateDocuments = async (req, res) => {
   await candidate.save()
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
   await syncCmsFromCandidate(savedCandidate)
+  await invalidateCandidateCaches()
 
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
-  invalidateCandidateCaches()
   res.json(savedCandidate)
 }
 
@@ -493,10 +498,11 @@ const deleteCandidateDocument = async (req, res) => {
 
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
   await syncCmsFromCandidate(savedCandidate)
+  await invalidateCandidateCaches()
+
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
-  invalidateCandidateCaches()
   res.json(savedCandidate)
 }
 
@@ -567,6 +573,7 @@ const updateCandidateStatus = async (req, res) => {
 
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')
   await syncCmsFromCandidate(savedCandidate)
+  await invalidateCandidateCaches()
 
   emitToAdmin('status_updated', {
     type: 'candidate',
@@ -576,7 +583,6 @@ const updateCandidateStatus = async (req, res) => {
   emitCandidateEvent('candidate_updated', 'candidate_updated', ownerUserId(savedCandidate), savedCandidate)
   emitCandidateEvent('student_updated', 'student_updated', ownerUserId(savedCandidate), savedCandidate)
 
-  invalidateCandidateCaches()
   res.json(savedCandidate)
 }
 
@@ -596,8 +602,8 @@ const reorderCandidates = async (req, res) => {
     }))
   )
 
+  await invalidateCandidateCaches()
   emitToAdmin('reordered', { type: 'candidate', orderedIds })
-  invalidateCandidateCaches()
   res.json({ orderedIds })
 }
 

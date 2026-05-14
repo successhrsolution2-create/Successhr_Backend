@@ -13,22 +13,132 @@ const candidateDocumentTypes = [
     allowedMimeTypes: letterMimeTypes,
     allowedExtensions: letterExtensions
   },
-  { key: 'educationCertificates', label: 'All Education Certificates' },
-  { key: 'experienceLetter', label: 'Experience Letter' },
+  {
+    key: 'tenthCertificate',
+    label: '10th Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'twelfthCertificate',
+    label: '12th Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'graduateCertificate',
+    label: 'Graduate Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'postGraduateCertificate',
+    label: 'Post Graduate Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'experienceLetter',
+    label: 'Experience Letter',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
   {
     key: 'salarySlip',
-    label: 'Salary Slip / Bank Statement',
-    description: 'Previous 6 months with highlighted salary'
+    label: 'Salary Slip',
+    description: 'Previous 6 months with highlighted salary',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'bankStatement',
+    label: 'Bank Statement',
+    description: 'Previous 6 months with highlighted salary',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'msCitCertificate',
+    label: 'MS-CIT Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'cccCertificate',
+    label: 'CCC Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'advancedExcelCertificate',
+    label: 'Advanced Excel Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'powerPointCertificate',
+    label: 'PowerPoint Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'tallyCertificate',
+    label: 'Tally Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'autoCadCertificate',
+    label: 'AutoCAD Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'typingCertificate',
+    label: 'Typing Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'catiaCertificate',
+    label: 'CATIA Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
   },
   {
     key: 'computerCourseCertificate',
-    label: 'Computer Courses Certificate',
-    description: 'MS-CIT, Tally, Typing, Auto-Cad, Catia'
+    label: 'Other Computer Course Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
   },
-  { key: 'aadharCard', label: 'Aadhar Card' },
-  { key: 'panCard', label: 'PAN Card' },
+  {
+    key: 'aadharCard',
+    label: 'Aadhar Card',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'panCard',
+    label: 'PAN Card',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
   { key: 'passportSizePhoto', label: 'Passport Size Photo' },
-  { key: 'medicalFitnessCertificate', label: 'Medical Fitness Certificates' },
+  {
+    key: 'medicalFitnessCertificate',
+    label: 'Medical Fitness Certificates',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'candidatePhoto',
+    label: 'Photo Of Candidate With Letter / Receipt',
+    allowedMimeTypes: imageMimeTypes,
+    allowedExtensions: imageExtensions
+  }
+]
+
+const successDocumentTypes = [
   {
     key: 'hamiPatra',
     label: 'HP - Hami Patra',
@@ -42,35 +152,37 @@ const candidateDocumentTypes = [
     allowedExtensions: letterExtensions
   },
   {
-    key: 'selectedVideoFeedbackVideo',
+    key: 'selectedVideo',
     label: 'Selected Video / Feedback Video',
     allowedMimeTypes: videoMimeTypes,
     allowedExtensions: videoExtensions
   },
   {
-    key: 'candidatePhoto',
-    label: 'Photo Of Candidates',
-    allowedMimeTypes: imageMimeTypes,
-    allowedExtensions: imageExtensions
+    key: 'jobJoiningHamiPatra',
+    label: 'Job Joining Hami Patra',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
   }
 ]
 
-const candidateDocumentLabelByKey = candidateDocumentTypes.reduce((acc, doc) => {
+const allCandidateDocumentTypes = [...candidateDocumentTypes, ...successDocumentTypes]
+
+const candidateDocumentLabelByKey = allCandidateDocumentTypes.reduce((acc, doc) => {
   acc[doc.key] = doc.label
   return acc
 }, {})
 
-const candidateDocumentAllowedMimeTypesByKey = candidateDocumentTypes.reduce((acc, doc) => {
+const candidateDocumentAllowedMimeTypesByKey = allCandidateDocumentTypes.reduce((acc, doc) => {
   acc[doc.key] = new Set(doc.allowedMimeTypes || imageMimeTypes)
   return acc
 }, {})
 
-const candidateDocumentAllowedExtensionsByKey = candidateDocumentTypes.reduce((acc, doc) => {
+const candidateDocumentAllowedExtensionsByKey = allCandidateDocumentTypes.reduce((acc, doc) => {
   acc[doc.key] = new Set(doc.allowedExtensions || imageExtensions)
   return acc
 }, {})
 
-const candidateDocumentUploadFields = candidateDocumentTypes.map((doc) => ({
+const candidateDocumentUploadFields = allCandidateDocumentTypes.map((doc) => ({
   name: `documents.${doc.key}`,
   maxCount: 10
 }))
@@ -80,6 +192,8 @@ const isCandidateDocumentKey = (key) =>
 
 module.exports = {
   candidateDocumentTypes,
+  successDocumentTypes,
+  allCandidateDocumentTypes,
   candidateDocumentLabelByKey,
   candidateDocumentAllowedMimeTypesByKey,
   candidateDocumentAllowedExtensionsByKey,

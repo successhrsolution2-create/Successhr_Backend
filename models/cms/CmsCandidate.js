@@ -60,7 +60,7 @@ const cmsCandidateSchema = new mongoose.Schema(
     noticePeriod: String,
     keySkills: [String],
     preferredLocation: String,
-    marriageStatus: { type: String, enum: ['Married', 'Unmarried', 'Single'] },
+    marriageStatus: { type: String, enum: ['Married', 'Unmarried', 'Single', 'Widow'] },
     languagesKnown: [String],
     appliedFor: String,
     interestedDepartment: String,
@@ -87,6 +87,10 @@ const cmsCandidateSchema = new mongoose.Schema(
       brotherOccupation: String,
       sisterOccupation: String
     },
+    applicationDetails: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({})
+    },
     goalAim: String,
     feedback: String,
     suggestion: String,
@@ -103,6 +107,7 @@ const cmsCandidateSchema = new mongoose.Schema(
       reference: String,
       referenceMobileNo: String,
       whatsappChannelCommunity: String,
+      candidateRegistrationStatus: String,
       candidateDataSource: String,
       googleForm: String,
       justDialGoogleFeedback: String,
@@ -136,6 +141,14 @@ const cmsCandidateSchema = new mongoose.Schema(
         default: () => ({})
       },
       personalityRatings: {
+        type: mongoose.Schema.Types.Mixed,
+        default: () => ({})
+      },
+      directorAssessment: {
+        type: mongoose.Schema.Types.Mixed,
+        default: () => ({})
+      },
+      managerAssessment: {
         type: mongoose.Schema.Types.Mixed,
         default: () => ({})
       },

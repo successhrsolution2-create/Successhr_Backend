@@ -1,6 +1,10 @@
 const { redis } = require('../config/redis')
 
-const buildCacheKey = (req) => `${req.method}:${req.originalUrl}`
+const buildCacheKey = (req) => {
+  const userId = req.user?._id || req.user?.id
+  const userScope = userId ? `:user:${userId.toString()}` : ''
+  return `${req.method}:${req.originalUrl}${userScope}`
+}
 
 const cache = (ttlSeconds = 60) => async (req, res, next) => {
   if (req.method !== 'GET') return next()
@@ -33,4 +37,3 @@ const cache = (ttlSeconds = 60) => async (req, res, next) => {
 }
 
 module.exports = { cache, buildCacheKey }
-

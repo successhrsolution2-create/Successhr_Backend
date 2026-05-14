@@ -3,6 +3,7 @@ require('express-async-errors')
 
 const express = require('express')
 const http = require('http')
+const path = require('path')
 const compression = require('compression')
 const cors = require('cors')
 const connectDB = require('./config/db')
@@ -40,6 +41,7 @@ app.use(
   })
 )
 app.use(compression())
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 app.use(express.json({ limit: '2mb' }))
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
@@ -79,6 +81,8 @@ app.use((req, res) => {
 
 app.use((error, _req, res, _next) => {
   const status = error.statusCode || error.status || 500
+  const safeStatus = status >= 400 && status < 600 ? status : 500
+  const isProduction = process.env.NODE_ENV === 'production'
 
   if (error.code === 11000) {
     return res.status(409).json({ message: 'Duplicate value already exists' })
@@ -108,8 +112,15 @@ app.use((error, _req, res, _next) => {
     return res.status(400).json({ message: 'Unexpected upload field' })
   }
 
-  console.error(error)
-  res.status(status).json({ message: error.publicMessage || error.message || 'Server error' })
+  if (isProduction) {
+    console.error(`[server-error] ${error.name || 'Error'}: ${error.message || 'Server error'}`)
+  } else {
+    console.error(error)
+  }
+
+  res.status(safeStatus).json({
+    message: error.publicMessage || (isProduction && safeStatus >= 500 ? 'Server error' : error.message || 'Server error')
+  })
 })
 
 const start = async () => {
