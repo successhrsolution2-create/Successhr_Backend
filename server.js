@@ -22,10 +22,19 @@ const { verifyToken } = require('./middleware/authMiddleware')
 const { requireRole } = require('./middleware/roleMiddleware')
 const { redis } = require('./src/config/redis')
 
+const candidateDuplicateMessage = (message) => {
+  const match = String(message || '').match(/^A candidate with this (mobile number|email|aadhaar number) already exists$/i)
+  if (!match) return null
+
+  const field = match[1].toLowerCase() === 'aadhaar number' ? 'aadhaar' : match[1].toLowerCase()
+  return `Candidate already exists with this ${field}`
+}
+
 const app = express()
 const server = http.createServer(app)
 
 app.disable('x-powered-by')
+app.set("trust proxy", 1);
 
 const listen = (port) =>
   new Promise((resolve, reject) => {
@@ -98,6 +107,14 @@ app.use((error, _req, res, _next) => {
   const status = error.statusCode || error.status || 500
   const safeStatus = status >= 400 && status < 600 ? status : 500
   const isProduction = process.env.NODE_ENV === 'production'
+  const duplicateCandidateMessage = safeStatus === 409 ? candidateDuplicateMessage(error.message) : null
+
+  if (duplicateCandidateMessage) {
+    return res.status(409).json({
+      success: false,
+      message: duplicateCandidateMessage
+    })
+  }
 
   if (error.code === 11000) {
     return res.status(409).json({ message: 'Duplicate value already exists' })
@@ -125,6 +142,12 @@ app.use((error, _req, res, _next) => {
 
   if (error.code === 'LIMIT_UNEXPECTED_FILE') {
     return res.status(400).json({ message: 'Unexpected upload field' })
+  }
+
+  if (safeStatus < 500) {
+    return res.status(safeStatus).json({
+      message: error.publicMessage || error.message || 'Request failed'
+    })
   }
 
   if (isProduction) {

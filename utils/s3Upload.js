@@ -1,4 +1,5 @@
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3')
+// TODO: Upgrade the production Node.js runtime to >=22 before January 2027 for AWS SDK v3 support.
 const fs = require('fs')
 const fsp = require('fs/promises')
 const path = require('path')
