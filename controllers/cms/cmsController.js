@@ -1,9 +1,12 @@
 const CmsCandidate = require('../../models/cms/CmsCandidate')
 const CmsCompany = require('../../models/cms/CmsCompany')
 const CmsInterview = require('../../models/cms/CmsInterview')
+const CmsPdfShare = require('../../models/cms/CmsPdfShare')
 const CmsRemark = require('../../models/cms/CmsRemark')
 const Candidate = require('../../models/Candidate')
 const Placement = require('../../models/Placement')
+const User = require('../../models/User')
+const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
 const { nextCandidateCode } = require('../../utils/cmsCandidateCode')
 const { syncCandidateFromCms } = require('../../utils/candidateStatusSync')
@@ -24,6 +27,13 @@ const interviewDocumentLabelByKey = {
   interviewLetter: 'Interview Letter',
   confirmationLetter: 'Confirmation Letter'
 }
+
+const pdfSharePurpose = 'success-remark-pdf'
+const pdfShareExpiryDays = 30
+const pdfShareCodeBytes = 16
+const createPdfShareCode = () =>
+  crypto.randomBytes(pdfShareCodeBytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+const hashPdfShareCode = (code) => crypto.createHash('sha256').update(String(code || '')).digest('hex')
 
 const isInterviewDocumentKey = (key) =>
   Object.prototype.hasOwnProperty.call(interviewDocumentLabelByKey, key)
@@ -85,6 +95,70 @@ const ensureRemark = async (candidateId) => {
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+const directorAssessmentKeys = [
+  'classOfCandidate',
+  'priorityOfCandidate',
+  'counselingOfCandidate',
+  'counselingMode'
+]
+
+const normalizeDirectorAssessmentForAccess = (assessment = {}) =>
+  directorAssessmentKeys.reduce((acc, key) => {
+    const value = assessment?.[key]
+    acc[key] = Array.isArray(value)
+      ? value.map((item) => String(item || '').trim()).filter(Boolean)
+      : String(value || '').trim()
+        ? [String(value).trim()]
+        : []
+    return acc
+  }, {})
+
+const hasDirectorAssessmentValues = (assessment) =>
+  Object.values(normalizeDirectorAssessmentForAccess(assessment)).some((value) => value.length)
+
+const hasDirectorAssessmentChanged = (candidate, payload) => {
+  if (!Object.prototype.hasOwnProperty.call(payload?.interviewForm || {}, 'directorAssessment')) return false
+
+  return (
+    JSON.stringify(normalizeDirectorAssessmentForAccess(candidate?.interviewForm?.directorAssessment)) !==
+    JSON.stringify(normalizeDirectorAssessmentForAccess(payload.interviewForm.directorAssessment))
+  )
+}
+
+const hasDirectorAssessmentApproval = async (req) => {
+  if (req.user?.role === 'superAdmin') return true
+
+  const token =
+    req.get('x-director-assessment-approval') ||
+    req.body?.directorAssessmentApprovalToken ||
+    ''
+
+  if (!token) return false
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET)
+    if (decoded?.purpose !== 'director-assessment-approval' || !decoded?.id) return false
+
+    const approver = await User.findOne({
+      _id: decoded.id,
+      role: 'superAdmin',
+      isActive: true
+    }).select('_id')
+
+    return Boolean(approver)
+  } catch (_error) {
+    return false
+  }
+}
+
+const requireDirectorAssessmentApproval = async (req, shouldRequire) => {
+  if (!shouldRequire) return
+  if (await hasDirectorAssessmentApproval(req)) return
+
+  const error = new Error('Super admin credentials are required to change Director Assessment')
+  error.statusCode = 403
+  throw error
+}
 
 const invalidateReferenceCaches = () => {
   invalidateCache('/api/candidates').catch(() => {})
@@ -195,6 +269,10 @@ const ensureUniqueCmsCompanyIdentity = async (payload, excludeId) => {
 const createCandidate = async (req, res) => {
   normalizeCandidateIdentity(req.body)
   await ensureUniqueCandidateIdentity(req.body)
+  await requireDirectorAssessmentApproval(
+    req,
+    hasDirectorAssessmentValues(req.body?.interviewForm?.directorAssessment)
+  )
 
   const candidateCode = await nextCandidateCode(new Date())
   const candidate = await CmsCandidate.create({
@@ -332,8 +410,10 @@ const updateCandidate = async (req, res) => {
     return res.status(404).json({ message: 'Candidate not found' })
   }
 
+  await requireDirectorAssessmentApproval(req, hasDirectorAssessmentChanged(candidate, req.body || {}))
+
   Object.entries(req.body || {}).forEach(([key, value]) => {
-    if (key !== '_id' && key !== 'createdBy') {
+    if (key !== '_id' && key !== 'createdBy' && key !== 'directorAssessmentApprovalToken') {
       candidate[key] = value
     }
   })
@@ -470,19 +550,38 @@ const createSuccessRemarkShareLink = async (req, res) => {
     return res.status(404).json({ message: 'Candidate not found' })
   }
 
-  const token = jwt.sign(
-    {
-      purpose: 'success-remark-pdf',
-      candidateId: String(candidate._id)
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: '30d' }
-  )
+  const expiresAt = new Date(Date.now() + pdfShareExpiryDays * 24 * 60 * 60 * 1000)
+  let shareCode = ''
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const nextCode = createPdfShareCode()
+
+    try {
+      await CmsPdfShare.create({
+        tokenHash: hashPdfShareCode(nextCode),
+        candidateId: candidate._id,
+        purpose: pdfSharePurpose,
+        createdBy: req.user?._id,
+        expiresAt
+      })
+      shareCode = nextCode
+      break
+    } catch (error) {
+      if (error?.code !== 11000 || attempt === 4) {
+        throw error
+      }
+    }
+  }
+
+  if (!shareCode) {
+    return res.status(500).json({ message: 'Could not create PDF link' })
+  }
+
   const baseUrl = `${req.protocol}://${req.get('host')}`
 
   res.json({
-    url: `${baseUrl}/api/public/candidates/success-remark/${token}.pdf`,
-    expiresInDays: 30
+    url: `${baseUrl}/api/public/sr/${shareCode}.pdf`,
+    expiresInDays: pdfShareExpiryDays
   })
 }
 

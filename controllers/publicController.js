@@ -1,8 +1,10 @@
 const Candidate = require('../models/Candidate')
 const CmsCandidate = require('../models/cms/CmsCandidate')
+const CmsPdfShare = require('../models/cms/CmsPdfShare')
 const CmsRemark = require('../models/cms/CmsRemark')
 const BusinessAdvisor = require('../models/BusinessAdvisor')
 const User = require('../models/User')
+const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
 const { nextCandidateCode } = require('../utils/cmsCandidateCode')
 const { invalidateCache } = require('../src/utils/invalidateCache')
@@ -17,6 +19,8 @@ const {
 } = require('../utils/candidateDocuments')
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const pdfSharePurpose = 'success-remark-pdf'
+const hashPdfShareCode = (code) => crypto.createHash('sha256').update(String(code || '')).digest('hex')
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 const parseOptionalNumber = (value) => {
@@ -471,18 +475,41 @@ const submitApplication = async (req, res) => {
 }
 
 const downloadSharedSuccessRemarkPdf = async (req, res) => {
-  let decoded
-  try {
-    decoded = jwt.verify(req.params.token, process.env.JWT_SECRET)
-  } catch (_error) {
+  const shareToken = String(req.params.code || req.params.token || '').trim()
+  let candidateId = null
+
+  if (!shareToken) {
     return res.status(401).json({ message: 'Invalid or expired PDF link' })
   }
 
-  if (decoded?.purpose !== 'success-remark-pdf' || !decoded?.candidateId) {
-    return res.status(401).json({ message: 'Invalid PDF link' })
+  if (shareToken.includes('.')) {
+    let decoded
+    try {
+      decoded = jwt.verify(shareToken, process.env.JWT_SECRET)
+    } catch (_error) {
+      return res.status(401).json({ message: 'Invalid or expired PDF link' })
+    }
+
+    if (decoded?.purpose !== pdfSharePurpose || !decoded?.candidateId) {
+      return res.status(401).json({ message: 'Invalid PDF link' })
+    }
+
+    candidateId = decoded.candidateId
+  } else {
+    const share = await CmsPdfShare.findOne({
+      tokenHash: hashPdfShareCode(shareToken),
+      purpose: pdfSharePurpose,
+      expiresAt: { $gt: new Date() }
+    }).select('candidateId')
+
+    if (!share) {
+      return res.status(401).json({ message: 'Invalid or expired PDF link' })
+    }
+
+    candidateId = share.candidateId
   }
 
-  const candidate = await CmsCandidate.findById(decoded.candidateId)
+  const candidate = await CmsCandidate.findById(candidateId)
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }

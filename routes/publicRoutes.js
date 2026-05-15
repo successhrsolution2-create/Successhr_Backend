@@ -27,6 +27,7 @@ const pdfLimiter = rateLimit({
 })
 
 router.get('/advisor/:code', codeLookupLimiter, cache(120), getAdvisorByCode)
+router.get('/sr/:code.pdf', pdfLimiter, downloadSharedSuccessRemarkPdf)
 router.get('/candidates/success-remark/:token.pdf', pdfLimiter, downloadSharedSuccessRemarkPdf)
 router.post('/apply', submitLimiter, candidateDocumentUpload.fields(candidateDocumentUploadFields), submitApplication)
 router.post('/apply/:code', submitLimiter, candidateDocumentUpload.fields(candidateDocumentUploadFields), submitApplication)

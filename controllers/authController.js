@@ -6,6 +6,16 @@ const signToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '7d' })
 }
 
+const signDirectorAssessmentToken = (userId) =>
+  jwt.sign(
+    {
+      id: userId,
+      purpose: 'director-assessment-approval'
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m' }
+  )
+
 const sanitizeUser = (user) => {
   const safe = user.toJSON ? user.toJSON() : user
   delete safe.password
@@ -36,6 +46,34 @@ const login = async (req, res) => {
   res.json({
     token: signToken(user._id),
     user: sanitizeUser(user)
+  })
+}
+
+const createDirectorAssessmentUnlock = async (req, res) => {
+  const { email, password } = req.body
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Super admin email and password are required' })
+  }
+
+  const user = await User.findOne({
+    email: normalizeEmail(String(email || '')),
+    role: 'superAdmin'
+  }).select('+password')
+
+  if (!user || !user.isActive) {
+    return res.status(403).json({ message: 'Invalid super admin credentials' })
+  }
+
+  const matches = await bcrypt.compare(password, user.password)
+  if (!matches) {
+    return res.status(403).json({ message: 'Invalid super admin credentials' })
+  }
+
+  res.json({
+    token: signDirectorAssessmentToken(user._id),
+    expiresIn: 15 * 60,
+    approvedBy: sanitizeUser(user)
   })
 }
 
@@ -121,6 +159,7 @@ const updateSuperAdminPassword = async (req, res) => {
 module.exports = {
   login,
   me,
+  createDirectorAssessmentUnlock,
   getSuperAdminSettings,
   updateSuperAdminProfile,
   updateSuperAdminPassword

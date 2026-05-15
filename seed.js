@@ -12,16 +12,27 @@ async function seed() {
     process.exit()
   }
 
-  const hashed = await bcrypt.hash('Admin@123', 10)
+  const email = String(process.env.SEED_SUPER_ADMIN_EMAIL || '').trim().toLowerCase()
+  const password = String(process.env.SEED_SUPER_ADMIN_PASSWORD || '')
+
+  if (!email || !password) {
+    throw new Error('Set SEED_SUPER_ADMIN_EMAIL and SEED_SUPER_ADMIN_PASSWORD before running the seed script')
+  }
+
+  if (password.length < 10) {
+    throw new Error('SEED_SUPER_ADMIN_PASSWORD must be at least 10 characters')
+  }
+
+  const hashed = await bcrypt.hash(password, 10)
 
   await User.create({
     name: 'Super Admin',
-    email: 'admin@consultancy.com',
+    email,
     password: hashed,
     role: 'superAdmin'
   })
 
-  console.log('Super admin created: admin@consultancy.com / Admin@123')
+  console.log(`Super admin created: ${email}`)
   process.exit()
 }
 
