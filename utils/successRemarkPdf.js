@@ -72,12 +72,20 @@ const calculateQuestionMarksResult = (questions) => {
     const numeric = Number(marks)
     return Number.isFinite(numeric) ? numeric : null
   })
+  const activeQuestionCount = rows.filter(questionHasContent).length
+  const total = scores.reduce((sum, score) => sum + (Number.isFinite(score) ? score : 0), 0)
+  const maxTotal = activeQuestionCount * QUESTION_MARK_MAX
+  const percentage = maxTotal ? (total / maxTotal) * 100 : 0
+  const percentageLabel = Number.isInteger(percentage) ? `${percentage}%` : `${percentage.toFixed(2)}%`
 
   return {
     rows,
     scores,
-    total: scores.reduce((sum, score) => sum + (Number.isFinite(score) ? score : 0), 0),
-    maxTotal: scores.length * QUESTION_MARK_MAX
+    activeQuestionCount,
+    total,
+    maxTotal,
+    percentage,
+    percentageLabel
   }
 }
 
@@ -212,9 +220,9 @@ const generateSuccessRemarkPdf = (candidateDoc) => {
     const questionHeight = questionRowStartOffset + rows.length * questionRowHeight + questionBottomPadding
     ensureSpace(questionHeight + 18)
     drawRect(margin, y, pageWidth - margin * 2, questionHeight, { stroke: [0.06, 0.09, 0.16], lineWidth: 1.4 })
-    const titleW = 160
+    const titleW = 230
     drawRect((pageWidth - titleW) / 2, y + 18, titleW, 22, { stroke: [0.06, 0.09, 0.16], fill: [0.06, 0.09, 0.16] })
-    drawText('Interview Questions', (pageWidth - titleW) / 2 + 8, y + 22, { size: 12, bold: true, fill: [1, 1, 1], maxWidth: titleW - 16 })
+    drawText('Interview Questions and Answers', (pageWidth - titleW) / 2 + 8, y + 22, { size: 12, bold: true, fill: [1, 1, 1], maxWidth: titleW - 16 })
     let rowY = y + questionRowStartOffset
     rows.forEach((row, index) => {
       drawText(`${index + 1}.`, margin + 18, rowY + 5, { size: 10, bold: true, maxWidth: 26 })
@@ -225,7 +233,7 @@ const generateSuccessRemarkPdf = (candidateDoc) => {
       drawText(row.marks ? `${row.marks}/10` : '/10', marksX + 16, rowY + 5, { size: 9, bold: true, maxWidth: 50 })
       rowY += questionRowHeight
     })
-    drawText(`Total Marks: ${result.total}/${result.maxTotal}`, pageWidth - margin - 170, rowY + 10, { size: 11, bold: true, fill: [0.02, 0.23, 0.42], maxWidth: 150 })
+    drawText(`Total Marks: ${result.total}/${result.maxTotal} ${result.percentageLabel}`, pageWidth - margin - 210, rowY + 10, { size: 11, bold: true, fill: [0.02, 0.23, 0.42], maxWidth: 190 })
     y += questionHeight + 18
   }
 
