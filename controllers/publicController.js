@@ -123,7 +123,15 @@ const normalizeApplicationPayload = (body) => {
   payload.preferredIndustry = text(payload.preferredIndustry)
   payload.preferredJobLocation = text(payload.preferredJobLocation)
   payload.currentJobLocation = text(payload.currentJobLocation)
+  payload.currentJobLocationOther = payload.currentJobLocation === 'Other'
+    ? text(payload.currentJobLocationOther)
+    : ''
+  payload.currentJobLocationMidcArea = text(payload.currentJobLocationMidcArea)
+  payload.currentJobLocationMidcAreaOther = payload.currentJobLocationMidcArea === 'Other'
+    ? text(payload.currentJobLocationMidcAreaOther)
+    : ''
   payload.availabilityForInterview = text(payload.availabilityForInterview)
+  payload.interviewMode = text(payload.interviewMode)
   payload.familyDetails = {
     fatherOrHusbandName: text(payload.fatherOrHusbandName || payload.familyDetails?.fatherOrHusbandName),
     fatherOccupation: text(payload.fatherOccupation || payload.familyDetails?.fatherOccupation),
@@ -132,7 +140,15 @@ const normalizeApplicationPayload = (body) => {
     motherOccupation: text(payload.motherOccupation || payload.familyDetails?.motherOccupation),
     motherMobileNumber: toDigits(payload.motherMobileNumber || payload.familyDetails?.motherMobileNumber) || undefined,
     siblingName: text(payload.siblingName || payload.familyDetails?.siblingName),
-    siblingEducationOccupation: text(payload.siblingEducationOccupation || payload.familyDetails?.siblingEducationOccupation),
+    siblingEducation: text(payload.siblingEducation || payload.familyDetails?.siblingEducation || payload.siblingEducationOccupation || payload.familyDetails?.siblingEducationOccupation),
+    siblingMobileNumber: toDigits(payload.siblingMobileNumber || payload.familyDetails?.siblingMobileNumber) || undefined,
+    siblingDateOfBirth: payload.siblingDateOfBirth || payload.familyDetails?.siblingDateOfBirth || undefined,
+    siblingAge: parseOptionalNumber(payload.siblingAge || payload.familyDetails?.siblingAge),
+    siblingGender: pickOption(payload.siblingGender || payload.familyDetails?.siblingGender, ['Male', 'Female', 'Other']),
+    siblingStudyStandard: text(payload.siblingStudyStandard || payload.familyDetails?.siblingStudyStandard),
+    siblingStudyStandardOther: text(payload.siblingStudyStandardOther || payload.familyDetails?.siblingStudyStandardOther),
+    siblingCareerProfile: text(payload.siblingCareerProfile || payload.familyDetails?.siblingCareerProfile),
+    siblingCareerProfileOther: text(payload.siblingCareerProfileOther || payload.familyDetails?.siblingCareerProfileOther),
     brotherOccupation: text(payload.familyDetails?.brotherOccupation),
     sisterOccupation: text(payload.familyDetails?.sisterOccupation)
   }
@@ -182,7 +198,8 @@ const normalizeApplicationPayload = (body) => {
     [payload.placementReference.professorContactNumber, 'Professor / Staff / TPO contact number'],
     [payload.placementReference.referenceContactNumber, 'Reference contact number'],
     [payload.familyDetails.fatherMobileNumber, 'Father mobile number'],
-    [payload.familyDetails.motherMobileNumber, 'Mother mobile number']
+    [payload.familyDetails.motherMobileNumber, 'Mother mobile number'],
+    [payload.familyDetails.siblingMobileNumber, 'Sibling mobile number']
   ]
 
   for (const [value, label] of contactChecks) {
@@ -365,8 +382,12 @@ const createCmsCandidate = async (payload, superAdmin, advisor, sourceCandidate 
     preferredIndustry: payload.preferredIndustry,
     preferredJobLocation: payload.preferredJobLocation,
     availabilityForInterview: payload.availabilityForInterview,
+    interviewMode: payload.interviewMode,
     reasonForJobChange: payload.reasonForJobChange,
     currentJobLocation: payload.currentJobLocation,
+    currentJobLocationOther: payload.currentJobLocationOther,
+    currentJobLocationMidcArea: payload.currentJobLocationMidcArea,
+    currentJobLocationMidcAreaOther: payload.currentJobLocationMidcAreaOther,
     placementReference: payload.placementReference,
     familyDetails: payload.familyDetails,
     applicationDetails: payload.applicationDetails,

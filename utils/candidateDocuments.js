@@ -112,6 +112,12 @@ const candidateDocumentTypes = [
     allowedExtensions: letterExtensions
   },
   {
+    key: 'otherCertificationCertificate',
+    label: 'Other Certification Course Certificate',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
     key: 'aadharCard',
     label: 'Aadhar Card',
     allowedMimeTypes: letterMimeTypes,
@@ -123,22 +129,22 @@ const candidateDocumentTypes = [
     allowedMimeTypes: letterMimeTypes,
     allowedExtensions: letterExtensions
   },
-  { key: 'passportSizePhoto', label: 'Passport Size Photo' },
+  { key: 'passportSizePhoto', label: 'Professional Photo Of Candidate' },
   {
     key: 'medicalFitnessCertificate',
     label: 'Medical Fitness Certificates',
     allowedMimeTypes: letterMimeTypes,
     allowedExtensions: letterExtensions
-  },
+  }
+]
+
+const successDocumentTypes = [
   {
     key: 'candidatePhoto',
     label: 'Photo Of Candidate With Letter / Receipt',
     allowedMimeTypes: imageMimeTypes,
     allowedExtensions: imageExtensions
-  }
-]
-
-const successDocumentTypes = [
+  },
   {
     key: 'hamiPatra',
     label: 'HP - Hami Patra',

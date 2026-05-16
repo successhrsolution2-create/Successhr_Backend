@@ -67,8 +67,12 @@ const cmsCandidateSchema = new mongoose.Schema(
     preferredIndustry: String,
     preferredJobLocation: String,
     availabilityForInterview: String,
+    interviewMode: String,
     reasonForJobChange: String,
     currentJobLocation: String,
+    currentJobLocationOther: String,
+    currentJobLocationMidcArea: String,
+    currentJobLocationMidcAreaOther: String,
     placementReference: {
       professorName: String,
       professorContactNumber: String,
@@ -84,6 +88,18 @@ const cmsCandidateSchema = new mongoose.Schema(
       motherMobileNumber: String,
       siblingName: String,
       siblingEducationOccupation: String,
+      siblingEducation: String,
+      siblingMobileNumber: String,
+      siblingDateOfBirth: Date,
+      siblingAge: Number,
+      siblingGender: {
+        type: String,
+        enum: ['Male', 'Female', 'Other']
+      },
+      siblingStudyStandard: String,
+      siblingStudyStandardOther: String,
+      siblingCareerProfile: String,
+      siblingCareerProfileOther: String,
       brotherOccupation: String,
       sisterOccupation: String
     },
@@ -113,6 +129,22 @@ const cmsCandidateSchema = new mongoose.Schema(
       justDialGoogleFeedback: String,
       selectedVideoFeedbackVideo: String,
       hrContactDetails: String,
+      witnessName: String,
+      witnessMobileNumber: String,
+      witnessEducation: String,
+      witnessCareerProfile: String,
+      witnessRelation: String,
+      witnessRelationOther: String,
+      witnesses: [
+        {
+          witnessName: String,
+          witnessMobileNumber: String,
+          witnessEducation: String,
+          witnessCareerProfile: String,
+          witnessRelation: String,
+          witnessRelationOther: String
+        }
+      ],
       candidatePhoto: String,
       rcWrcStatus: String,
       interviewAttainedList: String
@@ -149,6 +181,10 @@ const cmsCandidateSchema = new mongoose.Schema(
         default: () => ({})
       },
       managerAssessment: {
+        type: mongoose.Schema.Types.Mixed,
+        default: () => ({})
+      },
+      computerCourseAssessment: {
         type: mongoose.Schema.Types.Mixed,
         default: () => ({})
       },

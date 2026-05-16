@@ -155,7 +155,7 @@ const requireDirectorAssessmentApproval = async (req, shouldRequire) => {
   if (!shouldRequire) return
   if (await hasDirectorAssessmentApproval(req)) return
 
-  const error = new Error('Super admin credentials are required to change Director Assessment')
+  const error = new Error('Super admin password is required to change Director Assessment')
   error.statusCode = 403
   throw error
 }
