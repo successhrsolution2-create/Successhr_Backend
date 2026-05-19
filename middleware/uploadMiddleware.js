@@ -30,6 +30,25 @@ const candidateDocumentUpload = createUpload(
   { files: 40 }
 )
 
+const spreadsheetUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    if ((file.originalname || '').toLowerCase().endsWith('.xlsx')) {
+      cb(null, true)
+      return
+    }
+
+    const error = new Error('Only .xlsx Excel files are allowed')
+    error.statusCode = 400
+    cb(error)
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1
+  }
+})
+
 module.exports = upload
 module.exports.imageUpload = imageUpload
 module.exports.candidateDocumentUpload = candidateDocumentUpload
+module.exports.spreadsheetUpload = spreadsheetUpload

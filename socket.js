@@ -2,6 +2,7 @@ const { Server } = require('socket.io')
 const jwt = require('jsonwebtoken')
 const User = require('./models/User')
 const { isAllowedOrigin } = require('./config/corsOptions')
+const { tokenFromSocket } = require('./utils/authCookie')
 
 let io
 
@@ -17,7 +18,7 @@ const setupSocket = (server) => {
 
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth?.token
+      const token = tokenFromSocket(socket)
 
       if (!token) {
         return next(new Error('Authentication token missing'))

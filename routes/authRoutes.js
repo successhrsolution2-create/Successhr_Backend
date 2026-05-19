@@ -2,6 +2,7 @@ const express = require('express')
 const rateLimit = require('express-rate-limit')
 const {
   login,
+  logout,
   me,
   createDirectorAssessmentUnlock,
   getSuperAdminSettings,
@@ -23,6 +24,7 @@ const loginLimiter = rateLimit({
 })
 
 router.post('/login', loginLimiter, login)
+router.post('/logout', logout)
 router.post('/director-assessment-unlock', verifyToken, requireRole('superAdmin', 'candidateAdmin'), loginLimiter, createDirectorAssessmentUnlock)
 router.get('/me', verifyToken, me)
 router.get('/settings', verifyToken, requireRole('superAdmin', 'businessAdvisor', 'candidateAdmin'), getSuperAdminSettings)

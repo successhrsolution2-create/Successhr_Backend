@@ -6,6 +6,7 @@ const http = require('http')
 const path = require('path')
 const compression = require('compression')
 const cors = require('cors')
+const rateLimit = require('express-rate-limit')
 const connectDB = require('./config/db')
 const { corsOrigin } = require('./config/corsOptions')
 const { setupSocket } = require('./socket')
@@ -33,6 +34,22 @@ const candidateDuplicateMessage = (message) => {
 const app = express()
 const server = http.createServer(app)
 
+const healthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests. Please wait a moment.' }
+})
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests. Please wait a moment.' }
+})
+
 app.disable('x-powered-by')
 app.set("trust proxy", 1);
 
@@ -50,6 +67,10 @@ app.use((_req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY')
   res.setHeader('Referrer-Policy', 'no-referrer')
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'"
+  )
 
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains')
@@ -67,11 +88,12 @@ app.use(
 app.use(compression())
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 app.use(express.json({ limit: '2mb' }))
-app.get('/api/health', (_req, res) => {
+app.use('/api', apiLimiter)
+app.get('/api/health', healthLimiter, (_req, res) => {
   res.json({ ok: true })
 })
 
-app.get('/api/health/redis', async (_req, res) => {
+app.get('/api/health/redis', healthLimiter, async (_req, res) => {
   if (!redis) {
     return res.status(500).json({ status: 'error', message: 'Redis not configured' })
   }
@@ -120,12 +142,16 @@ app.use((error, _req, res, _next) => {
     return res.status(409).json({ message: 'Duplicate value already exists' })
   }
 
+  if (error.type === 'entity.parse.failed' || (error instanceof SyntaxError && error.status === 400 && 'body' in error)) {
+    return res.status(400).json({ message: 'Invalid JSON body' })
+  }
+
   if (error.name === 'ValidationError') {
     return res.status(400).json({ message: error.message })
   }
 
   if (error.name === 'CastError') {
-    return res.status(400).json({ message: error.message || 'Invalid input value' })
+    return res.status(400).json({ message: 'Invalid ID' })
   }
 
   if (error.message?.includes('Only JPG')) {

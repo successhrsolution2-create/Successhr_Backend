@@ -343,7 +343,7 @@ const getAdvisorByCode = async (req, res) => {
 
 const createCmsCandidate = async (payload, superAdmin, advisor, sourceCandidate = null) => {
   const advisorName = advisor ? await resolveAdvisorDisplayName(advisor) : null
-  const candidateCode = await nextCandidateCode(new Date())
+  const candidateCode = await nextCandidateCode()
   const cmsCandidate = await CmsCandidate.create({
     candidateCode,
     sourceCandidateId: sourceCandidate?._id || null,

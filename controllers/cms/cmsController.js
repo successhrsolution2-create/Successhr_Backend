@@ -8,7 +8,8 @@ const Placement = require('../../models/Placement')
 const User = require('../../models/User')
 const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
-const { nextCandidateCode } = require('../../utils/cmsCandidateCode')
+const ExcelJS = require('exceljs')
+const { nextCandidateCode, nextCandidateCodes } = require('../../utils/cmsCandidateCode')
 const { syncCandidateFromCms } = require('../../utils/candidateStatusSync')
 const { uploadToS3, getObjectFromS3 } = require('../../utils/s3Upload')
 const { validateUploadFile } = require('../../utils/fileValidation')
@@ -160,6 +161,14 @@ const requireDirectorAssessmentApproval = async (req, shouldRequire) => {
   throw error
 }
 
+const requireCandidateDeleteApproval = async (req) => {
+  if (await hasDirectorAssessmentApproval(req)) return
+
+  const error = new Error('Super admin password approval is required to delete candidate')
+  error.statusCode = 403
+  throw error
+}
+
 const invalidateReferenceCaches = () => {
   invalidateCache('/api/candidates').catch(() => {})
   invalidateCache('/api/students').catch(() => {})
@@ -274,7 +283,7 @@ const createCandidate = async (req, res) => {
     hasDirectorAssessmentValues(req.body?.interviewForm?.directorAssessment)
   )
 
-  const candidateCode = await nextCandidateCode(new Date())
+  const candidateCode = await nextCandidateCode()
   const candidate = await CmsCandidate.create({
     ...req.body,
     candidateCode,
@@ -282,6 +291,569 @@ const createCandidate = async (req, res) => {
   })
   await ensureRemark(candidate._id)
   res.status(201).json(candidate)
+}
+
+const importHeaderMap = {
+  name: 'fullName',
+  fullname: 'fullName',
+  candidatename: 'fullName',
+  studentname: 'fullName',
+  number: 'mobileNumber',
+  mobile: 'mobileNumber',
+  mobilenumber: 'mobileNumber',
+  phone: 'mobileNumber',
+  phonenumber: 'mobileNumber',
+  contactnumber: 'mobileNumber',
+  email: 'emailId',
+  emailid: 'emailId',
+  emailaddress: 'emailId',
+  qualification: 'education',
+  education: 'education',
+  highesteducation: 'education',
+  college: 'collegeName',
+  collegename: 'collegeName',
+  institute: 'collegeName',
+  institutename: 'collegeName',
+  department: 'appliedFor',
+  dept: 'appliedFor',
+  jobrole: 'appliedFor',
+  appliedfor: 'appliedFor',
+  designation: 'currentDesignation',
+  currentdesignation: 'currentDesignation',
+  jobprofile: 'currentDesignation',
+  currentjobprofile: 'currentDesignation',
+  skills: 'keySkills',
+  keyskills: 'keySkills',
+  experience: 'totalExperience',
+  totalexperience: 'totalExperience',
+  location: 'preferredJobLocation',
+  preferredlocation: 'preferredJobLocation',
+  preferredjoblocation: 'preferredJobLocation',
+  address: 'currentAddress',
+  currentaddress: 'currentAddress',
+  permanentaddress: 'permanentAddress',
+  company: 'currentCompany',
+  currentcompany: 'currentCompany',
+  whatsapp: 'whatsappNo',
+  whatsappnumber: 'whatsappNo',
+  aadhaar: 'aadhaarNo',
+  aadhaarnumber: 'aadhaarNo',
+  aadhar: 'aadhaarNo',
+  aadharnumber: 'aadhaarNo',
+  pan: 'panNo',
+  pannumber: 'panNo',
+  dob: 'dateOfBirth',
+  dateofbirth: 'dateOfBirth',
+  gender: 'gender',
+  age: 'currentAge',
+  currentage: 'currentAge',
+  maritalstatus: 'marriageStatus',
+  marriagestatus: 'marriageStatus',
+  expectedsalary: 'expectedSalary',
+  expectedctc: 'expectedSalary',
+  currentctc: 'currentSalary',
+  currentsalary: 'currentSalary',
+  ctc: 'currentSalary',
+  salary: 'expectedSalary',
+  lookingfor: 'lookingForField',
+  lookingforfield: 'lookingForField',
+  keyresponsibilities: 'keyResponsibilities',
+  responsibilities: 'keyResponsibilities',
+  currentjoblocation: 'currentJobLocation',
+  lastjoblocation: 'currentJobLocation',
+  passingyear: 'yearOfHigherEducation',
+  computercourses: 'computerCourses',
+  achievements: 'otherAchievements',
+  otherachievements: 'otherAchievements',
+  referredby: 'placementReference.referenceBy',
+  referencecontact: 'placementReference.referenceContactNumber',
+  professorname: 'placementReference.professorName',
+  staffname: 'placementReference.professorName',
+  tponame: 'placementReference.professorName',
+  professorcontact: 'placementReference.professorContactNumber',
+  staffcontact: 'placementReference.professorContactNumber',
+  tpocontact: 'placementReference.professorContactNumber',
+  fathername: 'familyDetails.fatherOrHusbandName',
+  husbandname: 'familyDetails.fatherOrHusbandName',
+  fathermobile: 'familyDetails.fatherMobileNumber',
+  fathercontact: 'familyDetails.fatherMobileNumber',
+  fatheroccupation: 'familyDetails.fatherOccupation',
+  mothername: 'familyDetails.motherOrWifeName',
+  wifename: 'familyDetails.motherOrWifeName',
+  mothermobile: 'familyDetails.motherMobileNumber',
+  mothercontact: 'familyDetails.motherMobileNumber',
+  motheroccupation: 'familyDetails.motherOccupation'
+}
+
+const normalizeImportHeader = (value) =>
+  String(value || '').trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '')
+
+const importFieldFromHeader = (header) => {
+  const normalized = normalizeImportHeader(header)
+  if (!normalized) return null
+  if (importHeaderMap[normalized]) return importHeaderMap[normalized]
+
+  if ((normalized.includes('professor') || normalized.includes('staff') || normalized.includes('tpo')) && normalized.includes('contact')) return 'placementReference.professorContactNumber'
+  if ((normalized.includes('professor') || normalized.includes('staff') || normalized.includes('tpo')) && normalized.includes('name')) return 'placementReference.professorName'
+  if (normalized.includes('reference') && normalized.includes('contact')) return 'placementReference.referenceContactNumber'
+  if ((normalized.includes('reference') || normalized.includes('referred')) && normalized.includes('by')) return 'placementReference.referenceBy'
+  if ((normalized.includes('father') || normalized.includes('husband')) && normalized.includes('contact')) return 'familyDetails.fatherMobileNumber'
+  if ((normalized.includes('father') || normalized.includes('husband')) && normalized.includes('mobile')) return 'familyDetails.fatherMobileNumber'
+  if ((normalized.includes('father') || normalized.includes('husband')) && normalized.includes('occupation')) return 'familyDetails.fatherOccupation'
+  if ((normalized.includes('father') || normalized.includes('husband')) && normalized.includes('name')) return 'familyDetails.fatherOrHusbandName'
+  if ((normalized.includes('mother') || normalized.includes('wife')) && normalized.includes('contact')) return 'familyDetails.motherMobileNumber'
+  if ((normalized.includes('mother') || normalized.includes('wife')) && normalized.includes('mobile')) return 'familyDetails.motherMobileNumber'
+  if ((normalized.includes('mother') || normalized.includes('wife')) && normalized.includes('occupation')) return 'familyDetails.motherOccupation'
+  if ((normalized.includes('mother') || normalized.includes('wife')) && normalized.includes('name')) return 'familyDetails.motherOrWifeName'
+  if (normalized.includes('email') || normalized.includes('mailid')) return 'emailId'
+  if (normalized.includes('whatsapp')) return 'whatsappNo'
+  if (normalized.includes('aadhaar') || normalized.includes('aadhar')) return 'aadhaarNo'
+  if (normalized.includes('pan')) return 'panNo'
+  if (normalized.includes('mobile') || normalized.includes('phone') || normalized.includes('contact') || normalized === 'number') return 'mobileNumber'
+  if (normalized === 'name' || normalized.includes('candidate') || normalized.includes('student') || normalized.includes('applicant')) return 'fullName'
+  if (normalized.includes('qualification') || normalized.includes('education')) return 'education'
+  if (normalized.includes('expected') && (normalized.includes('salary') || normalized.includes('ctc'))) return 'expectedSalary'
+  if (normalized.includes('current') && (normalized.includes('salary') || normalized.includes('ctc'))) return 'currentSalary'
+  if (normalized.includes('salary')) return 'expectedSalary'
+  if (normalized.includes('jobprofile')) return 'currentDesignation'
+  if (normalized.includes('jobrole') || (normalized.includes('job') && normalized.includes('role')) || normalized === 'role' || normalized.includes('department') || normalized.includes('dept') || normalized.includes('epart')) return 'appliedFor'
+  if (normalized.includes('skill')) return 'keySkills'
+  if (normalized.includes('college') || normalized.includes('institute')) return 'collegeName'
+  if (normalized.includes('permanent') && normalized.includes('address')) return 'permanentAddress'
+  if (normalized.includes('address')) return 'currentAddress'
+  if (normalized.includes('experience')) return 'totalExperience'
+  if (normalized.includes('current') && normalized.includes('job') && normalized.includes('location')) return 'currentJobLocation'
+  if (normalized.includes('location')) return 'preferredJobLocation'
+  if (normalized.includes('company')) return 'currentCompany'
+  if (normalized.includes('designation')) return 'currentDesignation'
+  if (normalized.includes('lookingfor')) return 'lookingForField'
+  if (normalized.includes('responsibilit')) return 'keyResponsibilities'
+  if (normalized.includes('gender')) return 'gender'
+  if (normalized.includes('dob') || normalized.includes('birth')) return 'dateOfBirth'
+  if (normalized.includes('marital') || normalized.includes('marriage')) return 'marriageStatus'
+  if (normalized.includes('age')) return 'currentAge'
+
+  return null
+}
+
+const excelValue = (value) => {
+  if (value === null || value === undefined) return ''
+  if (value instanceof Date) return value
+  if (typeof value !== 'object') return value
+  if (value.text !== undefined) return value.text
+  if (value.result !== undefined) return value.result
+  if (Array.isArray(value.richText)) return value.richText.map((item) => item.text || '').join('')
+  return String(value)
+}
+
+const parseImportDate = (value) => {
+  if (!value) return undefined
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed
+}
+
+const cleanImportCandidate = (payload) => {
+  payload.fullName = String(payload.fullName || '').trim()
+  payload.mobileNumber = toDigits(payload.mobileNumber)
+  payload.whatsappNo = toDigits(payload.whatsappNo) || undefined
+  payload.aadhaarNo = toDigits(payload.aadhaarNo) || undefined
+  payload.emailId = normalizeEmail(payload.emailId) || undefined
+  payload.panNo = String(payload.panNo || '').trim().toUpperCase() || undefined
+
+  if (payload.mobileNumber && payload.mobileNumber.length !== 10) payload.mobileNumber = undefined
+  if (payload.whatsappNo && payload.whatsappNo.length !== 10) payload.whatsappNo = undefined
+  if (payload.aadhaarNo && payload.aadhaarNo.length !== 12) payload.aadhaarNo = undefined
+  if (payload.emailId && !emailRegex.test(payload.emailId)) payload.emailId = undefined
+  if (payload.dateOfBirth !== undefined) payload.dateOfBirth = parseImportDate(payload.dateOfBirth)
+  if (payload.totalExperience !== undefined) {
+    const parsed = Number(String(payload.totalExperience).replace(/,/g, ''))
+    payload.totalExperience = Number.isFinite(parsed) ? parsed : undefined
+  }
+  if (payload.currentAge !== undefined) {
+    const parsed = Number(String(payload.currentAge).replace(/,/g, ''))
+    payload.currentAge = Number.isFinite(parsed) ? parsed : undefined
+  }
+  if (payload.keySkills !== undefined) {
+    payload.keySkills = String(payload.keySkills).split(/[,;|]/).map((item) => item.trim()).filter(Boolean)
+  }
+  if (payload.appliedFor && !payload.interestedDepartment) payload.interestedDepartment = payload.appliedFor
+
+  payload.source = 'admin_panel'
+  payload.intakeType = 'admin'
+}
+
+const setImportField = (payload, field, value) => {
+  const parts = field.split('.')
+  let target = payload
+  parts.slice(0, -1).forEach((part) => {
+    if (!target[part] || typeof target[part] !== 'object') target[part] = {}
+    target = target[part]
+  })
+  target[parts[parts.length - 1]] = value
+}
+
+const findImportHeaderRow = (rows) => {
+  let bestMatch = null
+  rows.slice(0, 15).forEach((row, index) => {
+    const mappedHeaders = row.values.map(importFieldFromHeader)
+    const fields = new Set(mappedHeaders.filter(Boolean))
+    const score =
+      fields.size +
+      (fields.has('fullName') ? 3 : 0) +
+      (fields.has('mobileNumber') ? 2 : 0) +
+      (fields.has('emailId') ? 2 : 0)
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = {
+        index,
+        rowNumber: row.rowNumber,
+        mappedHeaders,
+        score
+      }
+    }
+  })
+
+  return bestMatch?.score > 0 ? bestMatch : null
+}
+
+const readImportCandidates = async (file) => {
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(file.buffer)
+  const sheet = workbook.worksheets[0]
+  if (!sheet) return []
+
+  const rows = []
+  sheet.eachRow({ includeEmpty: false }, (row) => {
+    const values = []
+    for (let index = 1; index <= row.cellCount; index += 1) {
+      values.push(excelValue(row.getCell(index).value))
+    }
+    rows.push({ rowNumber: row.number, values })
+  })
+
+  if (rows.length < 2) return []
+
+  const headerRow = findImportHeaderRow(rows)
+  if (!headerRow) return []
+
+  return rows.slice(headerRow.index + 1).map((row) => {
+    const payload = {}
+    headerRow.mappedHeaders.forEach((field, columnIndex) => {
+      const value = row.values[columnIndex]
+      if (!field || value === undefined || value === null || String(value).trim() === '') return
+      setImportField(payload, field, value instanceof Date ? value : String(value).trim())
+    })
+    cleanImportCandidate(payload)
+    return { rowNumber: row.rowNumber, payload }
+  })
+}
+
+const importIdentityFields = [
+  { field: 'mobileNumber', label: 'mobile number' },
+  { field: 'emailId', label: 'email' },
+  { field: 'aadhaarNo', label: 'aadhaar number' }
+]
+
+const findImportRowsToCreate = async (rows) => {
+  const failedRows = []
+  const rowsWithoutFileDuplicates = []
+  const seenByField = importIdentityFields.reduce((acc, item) => {
+    acc[item.field] = new Map()
+    return acc
+  }, {})
+  const valuesByField = importIdentityFields.reduce((acc, item) => {
+    acc[item.field] = new Set()
+    return acc
+  }, {})
+
+  rows.forEach((row) => {
+    const errors = []
+
+    importIdentityFields.forEach(({ field, label }) => {
+      const value = row.payload[field]
+      if (!value) return
+
+      const firstRow = seenByField[field].get(value)
+      if (firstRow) {
+        errors.push(`Duplicate ${label} in Excel file (same as row ${firstRow})`)
+        return
+      }
+
+      seenByField[field].set(value, row.rowNumber)
+      valuesByField[field].add(value)
+    })
+
+    if (errors.length) {
+      failedRows.push({ row: row.rowNumber, name: row.payload.fullName, errors })
+      return
+    }
+
+    rowsWithoutFileDuplicates.push(row)
+  })
+
+  const orFilters = importIdentityFields
+    .map(({ field }) => {
+      const values = Array.from(valuesByField[field])
+      return values.length ? { [field]: { $in: values } } : null
+    })
+    .filter(Boolean)
+
+  if (!orFilters.length) return { rowsToCreate: rowsWithoutFileDuplicates, failedRows }
+
+  const [existingCmsCandidates, existingCandidates] = await Promise.all([
+    CmsCandidate.find({ $or: orFilters }).select('mobileNumber emailId aadhaarNo').lean(),
+    Candidate.find({ $or: orFilters }).select('mobileNumber emailId aadhaarNo').lean()
+  ])
+
+  const existingByField = importIdentityFields.reduce((acc, item) => {
+    acc[item.field] = new Set()
+    return acc
+  }, {})
+
+  ;[...existingCmsCandidates, ...existingCandidates].forEach((candidate) => {
+    importIdentityFields.forEach(({ field }) => {
+      if (candidate[field]) existingByField[field].add(candidate[field])
+    })
+  })
+
+  const rowsToCreate = []
+  rowsWithoutFileDuplicates.forEach((row) => {
+    const errors = importIdentityFields
+      .filter(({ field }) => row.payload[field] && existingByField[field].has(row.payload[field]))
+      .map(({ label }) => `A candidate with this ${label} already exists`)
+
+    if (errors.length) {
+      failedRows.push({ row: row.rowNumber, name: row.payload.fullName, errors })
+      return
+    }
+
+    rowsToCreate.push(row)
+  })
+
+  return { rowsToCreate, failedRows }
+}
+
+const allowedImportRootFields = new Set([
+  'fullName',
+  'collegeName',
+  'mobileNumber',
+  'aadhaarNo',
+  'panNo',
+  'whatsappNo',
+  'emailId',
+  'dateOfBirth',
+  'gender',
+  'currentAge',
+  'currentAddress',
+  'permanentAddress',
+  'education',
+  'yearOfHigherEducation',
+  'computerCourses',
+  'otherAchievements',
+  'specialization',
+  'totalExperience',
+  'experienceDepartment',
+  'currentCompany',
+  'lookingForField',
+  'keyResponsibilities',
+  'careerSummary',
+  'currentDesignation',
+  'currentSalary',
+  'expectedSalary',
+  'noticePeriod',
+  'keySkills',
+  'preferredLocation',
+  'marriageStatus',
+  'languagesKnown',
+  'appliedFor',
+  'interestedDepartment',
+  'preferredIndustry',
+  'preferredJobLocation',
+  'availabilityForInterview',
+  'interviewMode',
+  'reasonForJobChange',
+  'currentJobLocation',
+  'currentJobLocationOther',
+  'currentJobLocationMidcArea',
+  'currentJobLocationMidcAreaOther',
+  'source',
+  'intakeType'
+])
+
+const allowedImportNestedFields = {
+  placementReference: new Set([
+    'professorName',
+    'professorContactNumber',
+    'referenceBy',
+    'referenceContactNumber'
+  ]),
+  familyDetails: new Set([
+    'fatherOrHusbandName',
+    'fatherOccupation',
+    'fatherMobileNumber',
+    'motherOrWifeName',
+    'motherOccupation',
+    'motherMobileNumber'
+  ])
+}
+
+const sanitizeConfirmedImportPayload = (rawPayload = {}) => {
+  const source = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload) ? rawPayload : {}
+  const payload = {}
+
+  Object.entries(source).forEach(([key, value]) => {
+    if (allowedImportRootFields.has(key)) {
+      payload[key] = value
+      return
+    }
+
+    const nestedFields = allowedImportNestedFields[key]
+    if (!nestedFields || !value || typeof value !== 'object' || Array.isArray(value)) return
+
+    Object.entries(value).forEach(([nestedKey, nestedValue]) => {
+      if (!nestedFields.has(nestedKey)) return
+      if (!payload[key]) payload[key] = {}
+      payload[key][nestedKey] = nestedValue
+    })
+  })
+
+  cleanImportCandidate(payload)
+  return payload
+}
+
+const rowsFromConfirmedImport = (rawRows = []) =>
+  (Array.isArray(rawRows) ? rawRows : []).slice(0, 1000).map((row, index) => {
+    const source = row && typeof row === 'object' && !Array.isArray(row) ? row : {}
+    return {
+      rowNumber: Number.parseInt(String(source.rowNumber || source.row || index + 1), 10) || index + 1,
+      payload: sanitizeConfirmedImportPayload(source.payload || source.candidate || source)
+    }
+  })
+
+const createImportCandidatesFromRows = async (rows, userId) => {
+  const createdCandidates = []
+  const skippedRows = []
+  const failedRows = []
+  const namedRows = []
+  let rowsBeingCreated = []
+
+  for (const row of rows) {
+    if (!row.payload.fullName) {
+      skippedRows.push({ row: row.rowNumber, reason: 'Name is required' })
+      continue
+    }
+
+    namedRows.push(row)
+  }
+
+  try {
+    const checkedRows = await findImportRowsToCreate(namedRows)
+    failedRows.push(...checkedRows.failedRows)
+    rowsBeingCreated = checkedRows.rowsToCreate
+
+    if (rowsBeingCreated.length) {
+      const candidateCodes = await nextCandidateCodes(rowsBeingCreated.length)
+      const candidatesToCreate = rowsBeingCreated.map((row, index) => ({
+        ...row.payload,
+        candidateCode: candidateCodes[index],
+        createdBy: userId
+      }))
+      const insertedCandidates = await CmsCandidate.insertMany(candidatesToCreate)
+
+      if (insertedCandidates.length) {
+        await CmsRemark.insertMany(
+          insertedCandidates.map((candidate) => ({
+            candidateId: candidate._id,
+            checkboxes: defaultCheckboxes()
+          })),
+          { ordered: false }
+        )
+      }
+
+      createdCandidates.push(...insertedCandidates.map(withResolvedReference))
+    }
+  } catch (error) {
+    const rowsToReport = rowsBeingCreated.length ? rowsBeingCreated : namedRows
+    rowsToReport.forEach((row) => {
+      failedRows.push({
+        row: row.rowNumber,
+        name: row.payload.fullName,
+        errors: [error.message || 'Could not import row']
+      })
+    })
+  }
+
+  if (createdCandidates.length) invalidateReferenceCaches()
+
+  return {
+    totalRows: rows.length,
+    createdCount: createdCandidates.length,
+    skippedCount: skippedRows.length,
+    failedCount: failedRows.length,
+    candidates: createdCandidates,
+    skippedRows,
+    failedRows
+  }
+}
+
+const readImportFileRows = async (file) => {
+  try {
+    return await readImportCandidates(file)
+  } catch (_error) {
+    const error = new Error('Could not read Excel file. Please upload a valid .xlsx file.')
+    error.statusCode = 400
+    throw error
+  }
+}
+
+const previewImportCandidates = async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'Excel file is required' })
+
+  const rows = await readImportFileRows(req.file)
+  const skippedRows = []
+  const namedRows = []
+
+  rows.forEach((row) => {
+    if (!row.payload.fullName) {
+      skippedRows.push({ row: row.rowNumber, reason: 'Name is required' })
+      return
+    }
+
+    namedRows.push(row)
+  })
+
+  const checkedRows = await findImportRowsToCreate(namedRows)
+  const previewRows = checkedRows.rowsToCreate.map((row) => ({
+    rowNumber: row.rowNumber,
+    payload: row.payload
+  }))
+
+  res.json({
+    totalRows: rows.length,
+    importableCount: previewRows.length,
+    skippedCount: skippedRows.length,
+    failedCount: checkedRows.failedRows.length,
+    previewRows,
+    skippedRows,
+    failedRows: checkedRows.failedRows
+  })
+}
+
+const confirmImportCandidates = async (req, res) => {
+  const rows = rowsFromConfirmedImport(req.body?.rows)
+  if (!rows.length) return res.status(400).json({ message: 'No import rows selected' })
+
+  const result = await createImportCandidatesFromRows(rows, req.user._id)
+  res.json(result)
+}
+
+const importCandidates = async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'Excel file is required' })
+
+  const rows = await readImportFileRows(req.file)
+  const result = await createImportCandidatesFromRows(rows, req.user._id)
+  res.json(result)
 }
 
 const withResolvedReference = (candidateDoc) => {
@@ -297,6 +869,37 @@ const withResolvedReference = (candidateDoc) => {
   return candidate
 }
 
+const queryText = (value, maxLength = 120) => {
+  if (typeof value !== 'string') return ''
+  return value.trim().slice(0, maxLength)
+}
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const exactTextRegex = (value) => new RegExp(`^${escapeRegExp(value)}$`, 'i')
+const uniqueSortedText = (values) =>
+  [...new Set((Array.isArray(values) ? values : []).map((value) => queryText(String(value || ''), 120)).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+const positiveInt = (value, fallback, max) => {
+  const parsed = Number.parseInt(String(value || ''), 10)
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback
+  return Math.min(parsed, max)
+}
+
+const dateRangeFromKey = (value) => {
+  const key = queryText(value, 20)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null
+  const start = new Date(`${key}T00:00:00.000Z`)
+  const end = new Date(`${key}T23:59:59.999Z`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null
+  return { start, end }
+}
+
+const addDateFilter = (query, value) => {
+  const range = dateRangeFromKey(value)
+  if (!range) return
+  query.createdAt = { $gte: range.start, $lte: range.end }
+}
+
 const createCompany = async (req, res) => {
   normalizeCompanyIdentity(req.body)
   await ensureUniqueCmsCompanyIdentity(req.body)
@@ -310,55 +913,164 @@ const createCompany = async (req, res) => {
 }
 
 const listCandidates = async (req, res) => {
-  const { search = '', gender, marriageStatus } = req.query
+  const search = queryText(req.query.search)
+  const candidateId = queryText(req.query.candidateId || req.query.id, 40)
+  const jobRole = queryText(req.query.jobRole, 120)
+  const gender = queryText(req.query.gender, 30)
+  const education = queryText(req.query.education, 120)
+  const marriageStatus = queryText(req.query.marriageStatus, 30)
+  const tile = queryText(req.query.tile, 30)
+  const useLegacyAll = req.query.all === 'true' || req.query.paginated === 'false'
+  const page = positiveInt(req.query.page, 1, 100000)
+  const pageSize = positiveInt(req.query.pageSize, 10, 100)
 
   const query = {}
-  if (search.trim()) {
-    const regex = new RegExp(search.trim(), 'i')
-    query.$or = [{ fullName: regex }, { mobileNumber: regex }, { emailId: regex }, { keySkills: regex }]
+  if (search) {
+    const regex = new RegExp(escapeRegExp(search), 'i')
+    query.$or = [
+      { candidateCode: regex },
+      { fullName: regex },
+      { mobileNumber: regex },
+      { emailId: regex },
+      { keySkills: regex },
+      { appliedFor: regex },
+      { currentDesignation: regex },
+      { education: regex },
+      { gender: regex }
+    ]
+  }
+  if (candidateId) {
+    query.candidateCode = exactTextRegex(candidateId)
+  }
+  if (jobRole) {
+    const regex = exactTextRegex(jobRole)
+    query.$and = [...(query.$and || []), { $or: [{ appliedFor: regex }, { currentDesignation: regex }] }]
   }
   if (gender) {
     query.gender = gender
   }
+  if (education) {
+    query.education = exactTextRegex(education)
+  }
   if (marriageStatus) {
     query.marriageStatus = marriageStatus
   }
+  addDateFilter(query, req.query.date)
 
-  const candidates = await CmsCandidate.find(query)
-    .populate('advisor', 'name email advisorCode')
-    .sort({ createdAt: -1 })
+  if (tile === 'today') {
+    addDateFilter(query, new Date().toISOString().slice(0, 10))
+  }
+  if (tile === 'selected') {
+    query['successRemarks.selected.checked'] = true
+  }
+  if (tile === 'interviews') {
+    const interviewCandidateIds = await CmsInterview.distinct('candidateId')
+    query._id = { $in: interviewCandidateIds }
+  }
+
+  if (useLegacyAll) {
+    const candidates = await CmsCandidate.find(query)
+      .populate('advisor', 'name email advisorCode')
+      .sort({ createdAt: -1 })
+
+    const candidateIds = candidates.map((candidate) => candidate._id)
+    const interviews = candidateIds.length
+      ? await CmsInterview.find({ candidateId: { $in: candidateIds } })
+          .select(
+            'candidateId candidateName companyName jobRole reference attendInterview interestedForJoin interviewDate selectionChances ratingForCompany notAttendRemark notInterestedReason replyFromCompany positiveFeedback negativeFeedback overallDiscussion note updatedBy remark result createdAt updatedAt'
+          )
+          .sort({ interviewDate: -1, createdAt: -1 })
+      : []
+    const interviewsByCandidate = interviews.reduce((acc, interview) => {
+      const key = String(interview.candidateId)
+      if (!acc.has(key)) acc.set(key, [])
+      acc.get(key).push(interview)
+      return acc
+    }, new Map())
+
+    return res.json(
+      candidates.map((candidateDoc) => {
+        const candidate = withResolvedReference(candidateDoc)
+        candidate.interviews = interviewsByCandidate.get(String(candidate._id)) || []
+        candidate.interviewCount = candidate.interviews.length
+        return candidate
+      })
+    )
+  }
+
+  const skip = (page - 1) * pageSize
+  const todayRange = dateRangeFromKey(new Date().toISOString().slice(0, 10))
+
+  const [
+    total,
+    candidates,
+    statsTotal,
+    statsToday,
+    statsSelected,
+    interviewCandidateIdsForStats,
+    candidateCodeOptions,
+    appliedForOptions,
+    currentDesignationOptions,
+    genderOptions,
+    educationOptions
+  ] = await Promise.all([
+    CmsCandidate.countDocuments(query),
+    CmsCandidate.find(query)
+      .populate('advisor', 'name email advisorCode')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(pageSize),
+    CmsCandidate.countDocuments(),
+    todayRange ? CmsCandidate.countDocuments({ createdAt: { $gte: todayRange.start, $lte: todayRange.end } }) : 0,
+    CmsCandidate.countDocuments({ 'successRemarks.selected.checked': true }),
+    CmsInterview.distinct('candidateId'),
+    CmsCandidate.distinct('candidateCode'),
+    CmsCandidate.distinct('appliedFor'),
+    CmsCandidate.distinct('currentDesignation'),
+    CmsCandidate.distinct('gender'),
+    CmsCandidate.distinct('education')
+  ])
 
   const candidateIds = candidates.map((candidate) => candidate._id)
-  const interviews = candidateIds.length
-    ? await CmsInterview.find({ candidateId: { $in: candidateIds } })
-        .select(
-          'candidateId candidateName companyName jobRole reference attendInterview interestedForJoin interviewDate selectionChances ratingForCompany notAttendRemark notInterestedReason replyFromCompany positiveFeedback negativeFeedback overallDiscussion note updatedBy remark result createdAt updatedAt'
-        )
-        .sort({ interviewDate: -1, createdAt: -1 })
+  const interviewCounts = candidateIds.length
+    ? await CmsInterview.aggregate([
+        { $match: { candidateId: { $in: candidateIds } } },
+        { $group: { _id: '$candidateId', count: { $sum: 1 } } }
+      ])
     : []
-  const interviewsByCandidate = interviews.reduce((acc, interview) => {
-    const key = String(interview.candidateId)
-    if (!acc.has(key)) acc.set(key, [])
-    acc.get(key).push(interview)
-    return acc
-  }, new Map())
+  const interviewCountByCandidate = new Map(interviewCounts.map((item) => [String(item._id), item.count]))
 
-  res.json(
-    candidates.map((candidateDoc) => {
+  res.json({
+    items: candidates.map((candidateDoc) => {
       const candidate = withResolvedReference(candidateDoc)
-      candidate.interviews = interviewsByCandidate.get(String(candidate._id)) || []
-      candidate.interviewCount = candidate.interviews.length
+      candidate.interviews = []
+      candidate.interviewCount = interviewCountByCandidate.get(String(candidate._id)) || 0
       return candidate
-    })
-  )
+    }),
+    page,
+    pageSize,
+    total,
+    stats: {
+      total: statsTotal,
+      newToday: statsToday,
+      selected: statsSelected,
+      activeInterviews: interviewCandidateIdsForStats.length
+    },
+    filterOptions: {
+      candidateIds: uniqueSortedText(candidateCodeOptions),
+      jobRoles: uniqueSortedText([...(appliedForOptions || []), ...(currentDesignationOptions || [])]),
+      genders: uniqueSortedText(genderOptions),
+      educations: uniqueSortedText(educationOptions)
+    }
+  })
 }
 
 const listCompanies = async (req, res) => {
-  const { search = '' } = req.query
+  const search = queryText(req.query.search)
 
   const query = {}
-  if (search.trim()) {
-    const regex = new RegExp(search.trim(), 'i')
+  if (search) {
+    const regex = new RegExp(escapeRegExp(search), 'i')
     query.$or = [
       { companyName: regex },
       { companyAddress: regex },
@@ -698,6 +1410,8 @@ const updateCompany = async (req, res) => {
 }
 
 const deleteCandidate = async (req, res) => {
+  await requireCandidateDeleteApproval(req)
+
   const candidate = await CmsCandidate.findById(req.params.id)
 
   if (!candidate) {
@@ -891,6 +1605,9 @@ const updateRemarks = async (req, res) => {
 
 module.exports = {
   createCandidate,
+  importCandidates,
+  previewImportCandidates,
+  confirmImportCandidates,
   createCompany,
   listCandidates,
   listCompanies,

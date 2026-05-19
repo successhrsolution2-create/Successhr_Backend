@@ -1,9 +1,9 @@
 const jwt = require('jsonwebtoken')
 const User = require('../models/User')
+const { tokenFromRequest } = require('../utils/authCookie')
 
 const verifyToken = async (req, res, next) => {
-  const authHeader = req.headers.authorization
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null
+  const token = tokenFromRequest(req)
 
   if (!token) {
     return res.status(401).json({ message: 'Authentication token missing' })

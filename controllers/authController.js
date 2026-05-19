@@ -1,10 +1,22 @@
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const User = require('../models/User')
+const {
+  AUTH_COOKIE_NAME,
+  SESSION_MARKER,
+  authCookieOptions,
+  clearAuthCookieOptions
+} = require('../utils/authCookie')
 
 const signToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '7d' })
 }
+
+const LOGIN_ATTEMPT_WINDOW_MS = 15 * 60 * 1000
+const LOGIN_ACCOUNT_LOCK_MS = 15 * 60 * 1000
+const LOGIN_ACCOUNT_LOCK_THRESHOLD = 10
+const LOGIN_ACCOUNT_LOCK_MESSAGE = 'Too many failed login attempts for this account. Please try again later.'
+const loginAttempts = new Map()
 
 const signDirectorAssessmentToken = (userId) =>
   jwt.sign(
@@ -23,36 +35,98 @@ const sanitizeUser = (user) => {
 }
 
 const normalizeEmail = (email) => email.toLowerCase().trim()
+const isText = (value) => typeof value === 'string'
+const trimmedText = (value) => (isText(value) ? value.trim() : '')
+const requestBody = (body) => (body && typeof body === 'object' && !Array.isArray(body) ? body : {})
+
+const getLoginAttemptState = (email) => {
+  const now = Date.now()
+  const current = loginAttempts.get(email)
+
+  if (!current || current.firstAttemptAt + LOGIN_ATTEMPT_WINDOW_MS < now) {
+    const fresh = { count: 0, firstAttemptAt: now, lockedUntil: 0 }
+    loginAttempts.set(email, fresh)
+    return fresh
+  }
+
+  return current
+}
+
+const accountLockMessage = (email) => {
+  const state = getLoginAttemptState(email)
+  if (state.lockedUntil > Date.now()) {
+    return LOGIN_ACCOUNT_LOCK_MESSAGE
+  }
+  return null
+}
+
+const recordFailedLogin = (email) => {
+  const state = getLoginAttemptState(email)
+  state.count += 1
+
+  if (state.count >= LOGIN_ACCOUNT_LOCK_THRESHOLD) {
+    state.lockedUntil = Date.now() + LOGIN_ACCOUNT_LOCK_MS
+    console.warn(`[auth-lockout] Temporary login lock for account: ${email}`)
+    return true
+  }
+
+  return false
+}
+
+const clearFailedLogins = (email) => {
+  loginAttempts.delete(email)
+}
 
 const login = async (req, res) => {
-  const { email, password } = req.body
+  const { email, password } = requestBody(req.body)
 
-  if (!email || !password) {
+  if (!isText(email) || !isText(password) || !trimmedText(email) || !password) {
     return res.status(400).json({ message: 'Email and password are required' })
   }
 
-  const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password')
+  const normalizedEmail = normalizeEmail(email)
+  const lockMessage = accountLockMessage(normalizedEmail)
+  if (lockMessage) {
+    return res.status(429).json({ message: lockMessage })
+  }
+
+  const user = await User.findOne({ email: normalizedEmail }).select('+password')
 
   if (!user || !user.isActive) {
+    const locked = recordFailedLogin(normalizedEmail)
+    if (locked) {
+      return res.status(429).json({ message: LOGIN_ACCOUNT_LOCK_MESSAGE })
+    }
     return res.status(401).json({ message: 'Invalid email or password' })
   }
 
   const matches = await bcrypt.compare(password, user.password)
 
   if (!matches) {
+    const locked = recordFailedLogin(normalizedEmail)
+    if (locked) {
+      return res.status(429).json({ message: LOGIN_ACCOUNT_LOCK_MESSAGE })
+    }
     return res.status(401).json({ message: 'Invalid email or password' })
   }
 
+  clearFailedLogins(normalizedEmail)
+  res.cookie(AUTH_COOKIE_NAME, signToken(user._id), authCookieOptions())
   res.json({
-    token: signToken(user._id),
+    token: SESSION_MARKER,
     user: sanitizeUser(user)
   })
 }
 
-const createDirectorAssessmentUnlock = async (req, res) => {
-  const { password } = req.body
+const logout = async (_req, res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, clearAuthCookieOptions())
+  res.json({ message: 'Logged out' })
+}
 
-  if (!password) {
+const createDirectorAssessmentUnlock = async (req, res) => {
+  const { password } = requestBody(req.body)
+
+  if (!isText(password) || !password) {
     return res.status(400).json({ message: 'Super admin password is required' })
   }
 
@@ -81,7 +155,7 @@ const getSuperAdminSettings = async (req, res) => {
 }
 
 const updateSuperAdminProfile = async (req, res) => {
-  const { name, email } = req.body
+  const { name, email } = requestBody(req.body)
   const user = req.user
 
   if (name === undefined && email === undefined) {
@@ -89,7 +163,10 @@ const updateSuperAdminProfile = async (req, res) => {
   }
 
   if (name !== undefined) {
-    const normalizedName = String(name || '').trim()
+    if (!isText(name)) {
+      return res.status(400).json({ message: 'Name must be text' })
+    }
+    const normalizedName = trimmedText(name)
     if (!normalizedName) {
       return res.status(400).json({ message: 'Name is required' })
     }
@@ -97,7 +174,10 @@ const updateSuperAdminProfile = async (req, res) => {
   }
 
   if (email !== undefined) {
-    const normalized = normalizeEmail(String(email || ''))
+    if (!isText(email)) {
+      return res.status(400).json({ message: 'Email must be text' })
+    }
+    const normalized = normalizeEmail(email)
     if (!normalized) {
       return res.status(400).json({ message: 'Email is required' })
     }
@@ -115,10 +195,14 @@ const updateSuperAdminProfile = async (req, res) => {
 }
 
 const updateSuperAdminPassword = async (req, res) => {
-  const { currentPassword, newPassword, confirmPassword } = req.body
+  const { currentPassword, newPassword, confirmPassword } = requestBody(req.body)
 
-  if (!currentPassword || !newPassword) {
+  if (!isText(currentPassword) || !isText(newPassword) || !currentPassword || !newPassword) {
     return res.status(400).json({ message: 'Current password and new password are required' })
+  }
+
+  if (confirmPassword !== undefined && !isText(confirmPassword)) {
+    return res.status(400).json({ message: 'Confirm password must be text' })
   }
 
   if (newPassword.length < 6) {
@@ -153,6 +237,7 @@ const updateSuperAdminPassword = async (req, res) => {
 
 module.exports = {
   login,
+  logout,
   me,
   createDirectorAssessmentUnlock,
   getSuperAdminSettings,

@@ -1,8 +1,35 @@
 const bcrypt = require('bcryptjs')
 const User = require('../models/User')
 const BusinessAdvisor = require('../models/BusinessAdvisor')
+const Candidate = require('../models/Candidate')
+const Company = require('../models/Company')
+const Placement = require('../models/Placement')
+const CmsCandidate = require('../models/cms/CmsCandidate')
 const { invalidateCache } = require('../src/utils/invalidateCache')
 const generateAdvisorCode = require('../utils/generateAdvisorCode')
+
+const isText = (value) => typeof value === 'string'
+const trimmedText = (value) => (isText(value) ? value.trim() : '')
+const isPlainObject = (value) => value === undefined || (value && typeof value === 'object' && !Array.isArray(value))
+const requestBody = (body) => (body && typeof body === 'object' && !Array.isArray(body) ? body : {})
+
+const validateBusinessAdvisorPayload = (rawBody = {}, { partial = false } = {}) => {
+  const body = requestBody(rawBody)
+  const { name, email, password, isActive, documents, bankDetails } = body
+
+  if (!partial && (!trimmedText(name) || !trimmedText(email) || !isText(password) || !password)) {
+    return 'Name, email, and password are required'
+  }
+
+  if (name !== undefined && !trimmedText(name)) return 'Name must be text'
+  if (email !== undefined && !trimmedText(email)) return 'Email must be text'
+  if (password !== undefined && !isText(password)) return 'Password must be text'
+  if (isActive !== undefined && typeof isActive !== 'boolean') return 'isActive must be true or false'
+  if (!isPlainObject(documents)) return 'Documents must be an object'
+  if (!isPlainObject(bankDetails)) return 'Bank details must be an object'
+
+  return null
+}
 
 const invalidateBusinessAdvisorCaches = (userId) =>
   Promise.all([
@@ -77,13 +104,16 @@ const listBusinessAdvisors = async (_req, res) => {
 }
 
 const createBusinessAdvisor = async (req, res) => {
-  const { name, email, password, phone, address, city, isActive, documents, bankDetails } = req.body
+  const body = requestBody(req.body)
+  const { name, email, password, phone, address, city, isActive, documents, bankDetails } = body
 
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'Name, email, and password are required' })
+  const validationError = validateBusinessAdvisorPayload(body)
+  if (validationError) {
+    return res.status(400).json({ message: validationError })
   }
 
-  const normalizedEmail = email.toLowerCase().trim()
+  const normalizedName = trimmedText(name)
+  const normalizedEmail = trimmedText(email).toLowerCase()
   const exists = await User.findOne({ email: normalizedEmail })
 
   if (exists) {
@@ -92,7 +122,7 @@ const createBusinessAdvisor = async (req, res) => {
 
   const hashed = await bcrypt.hash(password, 10)
   const user = await User.create({
-    name,
+    name: normalizedName,
     email: normalizedEmail,
     password: hashed,
     role: 'businessAdvisor',
@@ -103,7 +133,7 @@ const createBusinessAdvisor = async (req, res) => {
 
   const profile = await BusinessAdvisor.create({
     userId: user._id,
-    fullName: name,
+    fullName: normalizedName,
     email: normalizedEmail,
     phone,
     address,
@@ -138,30 +168,37 @@ const createBusinessAdvisor = async (req, res) => {
 }
 
 const updateBusinessAdvisorUser = async (req, res) => {
-  const { name, email, isActive } = req.body
+  const body = requestBody(req.body)
+  const { name, email, isActive } = body
+  const validationError = validateBusinessAdvisorPayload(body, { partial: true })
+  if (validationError) {
+    return res.status(400).json({ message: validationError })
+  }
+
   const user = await User.findOne({ _id: req.params.id, role: 'businessAdvisor' })
 
   if (!user) {
     return res.status(404).json({ message: 'Business Advisor not found' })
   }
 
-  if (email && email.toLowerCase().trim() !== user.email) {
-    const exists = await User.findOne({ email: email.toLowerCase().trim(), _id: { $ne: user._id } })
+  const normalizedEmail = email !== undefined ? trimmedText(email).toLowerCase() : undefined
+  if (normalizedEmail && normalizedEmail !== user.email) {
+    const exists = await User.findOne({ email: normalizedEmail, _id: { $ne: user._id } })
 
     if (exists) {
       return res.status(409).json({ message: 'A user with this email already exists' })
     }
 
-    user.email = email.toLowerCase().trim()
+    user.email = normalizedEmail
   }
 
-  if (name !== undefined) user.name = name
-  if (isActive !== undefined) user.isActive = Boolean(isActive)
+  if (name !== undefined) user.name = trimmedText(name)
+  if (isActive !== undefined) user.isActive = isActive
 
   await user.save()
 
   const profileUpdates = {}
-  if (name !== undefined) profileUpdates.fullName = name
+  if (name !== undefined) profileUpdates.fullName = trimmedText(name)
   if (email !== undefined) profileUpdates.email = user.email
 
   if (Object.keys(profileUpdates).length > 0) {
@@ -173,9 +210,9 @@ const updateBusinessAdvisorUser = async (req, res) => {
 }
 
 const resetBusinessAdvisorPassword = async (req, res) => {
-  const { newPassword } = req.body
+  const { newPassword } = requestBody(req.body)
 
-  if (!newPassword || newPassword.length < 6) {
+  if (!isText(newPassword) || newPassword.length < 6) {
     return res.status(400).json({ message: 'New password must be at least 6 characters' })
   }
 
@@ -197,6 +234,25 @@ const deleteBusinessAdvisorUser = async (req, res) => {
 
   if (!user) {
     return res.status(404).json({ message: 'Business Advisor not found' })
+  }
+
+  const [candidateCount, companyCount, placementCount, cmsCandidateCount] = await Promise.all([
+    Candidate.countDocuments({ submittedBy: user._id }),
+    Company.countDocuments({ submittedBy: user._id }),
+    Placement.countDocuments({ baId: user._id }),
+    CmsCandidate.countDocuments({ advisor: user._id })
+  ])
+
+  if (candidateCount || companyCount || placementCount || cmsCandidateCount) {
+    return res.status(409).json({
+      message: 'Business Advisor has linked records. Reassign or delete their candidates, companies, and placements first.',
+      linkedRecords: {
+        candidates: candidateCount,
+        companies: companyCount,
+        placements: placementCount,
+        cmsCandidates: cmsCandidateCount
+      }
+    })
   }
 
   await BusinessAdvisor.deleteOne({ userId: user._id })

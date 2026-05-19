@@ -1,24 +1,52 @@
 const CmsCandidate = require('../models/cms/CmsCandidate')
 
-const codePrefixFromDate = (value) => {
-  const date = value ? new Date(value) : new Date()
-  const year = String(date.getFullYear()).slice(-2)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  return `C${year}${month}`
+const candidateCodePrefix = 'SC-'
+const sequentialCandidateCodeRegex = /^SC-(\d+)$/
+const legacyCandidateCodeRegex = /^C\d{4}(\d{4})$/
+
+const candidateCodeToNumber = (value) => {
+  const code = String(value || '').trim().toUpperCase()
+  const sequentialMatch = code.match(sequentialCandidateCodeRegex)
+  if (sequentialMatch) return Number(sequentialMatch[1]) || 0
+
+  const legacyMatch = code.match(legacyCandidateCodeRegex)
+  if (legacyMatch) return Number(legacyMatch[1]) || 0
+
+  return 0
 }
 
-const nextCandidateCode = async (createdAt) => {
-  const prefix = codePrefixFromDate(createdAt)
-  const regex = new RegExp(`^${prefix}\\d{4}$`)
+const nextCandidateCodes = async (count = 1) => {
+  const safeCount = Number(count)
+  if (!Number.isInteger(safeCount) || safeCount < 1) return []
 
-  const latest = await CmsCandidate.findOne({ candidateCode: regex })
-    .sort({ candidateCode: -1 })
-    .select('candidateCode')
-    .lean()
+  const [codedCandidates, totalCandidates] = await Promise.all([
+    CmsCandidate.find({
+      candidateCode: {
+        $regex: /^(SC-\d+|C\d{8})$/i
+      }
+    })
+      .select('candidateCode')
+      .lean(),
+    CmsCandidate.countDocuments()
+  ])
 
-  const latestNumber = latest?.candidateCode ? Number(latest.candidateCode.slice(-4)) : 0
-  const nextNumber = String((Number.isFinite(latestNumber) ? latestNumber : 0) + 1).padStart(4, '0')
-  return `${prefix}${nextNumber}`
+  const latestNumber = codedCandidates.reduce(
+    (highest, candidate) => Math.max(highest, candidateCodeToNumber(candidate.candidateCode)),
+    0
+  )
+  const nextNumber = Math.max(latestNumber, totalCandidates) + 1
+
+  return Array.from({ length: safeCount }, (_item, index) => `${candidateCodePrefix}${nextNumber + index}`)
 }
 
-module.exports = { nextCandidateCode }
+const nextCandidateCode = async () => {
+  const [code] = await nextCandidateCodes(1)
+  return code
+}
+
+module.exports = {
+  candidateCodePrefix,
+  candidateCodeToNumber,
+  nextCandidateCode,
+  nextCandidateCodes
+}

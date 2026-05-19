@@ -33,7 +33,7 @@ const cmsCandidateSchema = new mongoose.Schema(
     },
     fullName: { type: String, required: true, trim: true },
     collegeName: String,
-    mobileNumber: { type: String, required: true, trim: true },
+    mobileNumber: { type: String, trim: true },
     aadhaarNo: String,
     panNo: String,
     whatsappNo: String,

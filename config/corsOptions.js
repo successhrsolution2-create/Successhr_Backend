@@ -24,7 +24,10 @@ const corsOrigin = (origin, callback) => {
     return
   }
 
-  callback(new Error(`CORS blocked origin: ${origin}`))
+  const error = new Error('CORS origin is not allowed')
+  error.statusCode = 403
+  error.publicMessage = 'CORS origin is not allowed'
+  callback(error)
 }
 
 module.exports = {

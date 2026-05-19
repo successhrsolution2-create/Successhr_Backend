@@ -280,7 +280,7 @@ const mirrorCandidateToCms = async (candidate, advisor, existingCmsCandidate = n
       existingCmsCandidate.createdBy = payload.createdBy
     }
     if (!existingCmsCandidate.candidateCode) {
-      existingCmsCandidate.candidateCode = await nextCandidateCode(new Date())
+      existingCmsCandidate.candidateCode = await nextCandidateCode()
     }
 
     await existingCmsCandidate.save()
@@ -288,7 +288,7 @@ const mirrorCandidateToCms = async (candidate, advisor, existingCmsCandidate = n
     return existingCmsCandidate
   }
 
-  const candidateCode = await nextCandidateCode(new Date())
+  const candidateCode = await nextCandidateCode()
   const cmsCandidate = await CmsCandidate.create({
     candidateCode,
     ...payload
