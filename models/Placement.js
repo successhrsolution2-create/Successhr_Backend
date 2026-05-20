@@ -94,6 +94,8 @@ placementSchema.pre('validate', function normalizeLegacyCandidateRef() {
   }
 })
 
+placementSchema.index({ studentId: 1 }, { sparse: true })
+
 placementSchema.pre('save', function updateEarning() {
   const salary = Number(this.offeredSalaryPM || 0)
   const basis = Number(this.salaryBasis || 1)

@@ -41,4 +41,6 @@ const cmsInterviewSchema = new mongoose.Schema(
   { timestamps: true, collection: 'cms_interviews' }
 )
 
+cmsInterviewSchema.index({ candidateId: 1 })
+
 module.exports = mongoose.model('CmsInterview', cmsInterviewSchema)

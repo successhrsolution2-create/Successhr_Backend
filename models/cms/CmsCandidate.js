@@ -240,4 +240,6 @@ const cmsCandidateSchema = new mongoose.Schema(
   { timestamps: true, collection: 'cms_candidates' }
 )
 
+cmsCandidateSchema.index({ sourceCandidateId: 1 }, { sparse: true })
+
 module.exports = mongoose.model('CmsCandidate', cmsCandidateSchema)

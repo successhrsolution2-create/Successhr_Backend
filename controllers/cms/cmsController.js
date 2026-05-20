@@ -33,6 +33,7 @@ const interviewDocumentLabelByKey = {
 const pdfSharePurpose = 'success-remark-pdf'
 const pdfShareExpiryDays = 30
 const pdfShareCodeBytes = 16
+const CANDIDATE_DELETE_BATCH_SIZE = 25
 const createPdfShareCode = () =>
   crypto.randomBytes(pdfShareCodeBytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 const hashPdfShareCode = (code) => crypto.createHash('sha256').update(String(code || '')).digest('hex')
@@ -168,6 +169,34 @@ const requireCandidateDeleteApproval = async (req) => {
   const error = new Error('Super admin password approval is required to delete candidate')
   error.statusCode = 403
   throw error
+}
+
+const chunkArray = (items, size) => {
+  const chunks = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
+const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve))
+
+const deleteCmsCandidateBatch = async (candidateIds, linkedCandidateIds = []) => {
+  await CmsInterview.deleteMany({ candidateId: { $in: candidateIds } })
+  await CmsRemark.deleteMany({ candidateId: { $in: candidateIds } })
+  await CmsPdfShare.deleteMany({ candidateId: { $in: candidateIds } })
+
+  if (linkedCandidateIds.length) {
+    await Placement.deleteMany({
+      $or: [
+        { candidateId: { $in: linkedCandidateIds } },
+        { studentId: { $in: linkedCandidateIds } }
+      ]
+    })
+    await Candidate.deleteMany({ _id: { $in: linkedCandidateIds } })
+  }
+
+  return CmsCandidate.deleteMany({ _id: { $in: candidateIds } })
 }
 
 const invalidateReferenceCaches = () => {
@@ -1473,27 +1502,16 @@ const updateCompany = async (req, res) => {
 const deleteCandidate = async (req, res) => {
   await requireCandidateDeleteApproval(req)
 
-  const candidate = await CmsCandidate.findById(req.params.id)
+  const candidate = await CmsCandidate.findById(req.params.id).select('_id sourceCandidateId').lean()
 
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
 
-  const linkedCandidate = candidate.sourceCandidateId
-    ? await Candidate.findById(candidate.sourceCandidateId).select('_id')
-    : null
-
-  await Promise.all([
-    CmsInterview.deleteMany({ candidateId: candidate._id }),
-    CmsRemark.deleteOne({ candidateId: candidate._id }),
-    linkedCandidate
-      ? Placement.deleteMany({
-          $or: [{ candidateId: linkedCandidate._id }, { studentId: linkedCandidate._id }]
-        })
-      : Promise.resolve(),
-    linkedCandidate ? linkedCandidate.deleteOne() : Promise.resolve(),
-    candidate.deleteOne()
-  ])
+  await deleteCmsCandidateBatch(
+    [candidate._id],
+    candidate.sourceCandidateId ? [candidate.sourceCandidateId] : []
+  )
 
   invalidateReferenceCaches()
   invalidateCache('/api/placements').catch(() => {})
@@ -1513,37 +1531,34 @@ const bulkDeleteCandidates = async (req, res) => {
     return res.status(400).json({ message: 'Select at least one candidate to delete' })
   }
 
-  const candidates = await CmsCandidate.find({ _id: { $in: uniqueIds } }).select('_id sourceCandidateId')
+  const candidates = await CmsCandidate.find({ _id: { $in: uniqueIds } }).select('_id sourceCandidateId').lean()
 
   if (candidates.length === 0) {
     return res.status(404).json({ message: 'Candidates not found' })
   }
 
-  const candidateIds = candidates.map((candidate) => candidate._id)
-  const linkedCandidateIds = [
-    ...new Set(candidates.map((candidate) => candidate.sourceCandidateId).filter(Boolean).map((id) => String(id)))
-  ]
+  const deletedCandidateIds = []
 
-  await Promise.all([
-    CmsInterview.deleteMany({ candidateId: { $in: candidateIds } }),
-    CmsRemark.deleteMany({ candidateId: { $in: candidateIds } }),
-    CmsPdfShare.deleteMany({ candidateId: { $in: candidateIds } }),
-    linkedCandidateIds.length
-      ? Placement.deleteMany({
-          $or: [
-            { candidateId: { $in: linkedCandidateIds } },
-            { studentId: { $in: linkedCandidateIds } }
-          ]
-        })
-      : Promise.resolve(),
-    linkedCandidateIds.length ? Candidate.deleteMany({ _id: { $in: linkedCandidateIds } }) : Promise.resolve(),
-    CmsCandidate.deleteMany({ _id: { $in: candidateIds } })
-  ])
+  for (const candidateBatch of chunkArray(candidates, CANDIDATE_DELETE_BATCH_SIZE)) {
+    const candidateIds = candidateBatch.map((candidate) => candidate._id)
+    const linkedCandidateIds = [
+      ...new Set(candidateBatch.map((candidate) => candidate.sourceCandidateId).filter(Boolean).map((id) => String(id)))
+    ]
+
+    // eslint-disable-next-line no-await-in-loop
+    await deleteCmsCandidateBatch(candidateIds, linkedCandidateIds)
+    deletedCandidateIds.push(...candidateIds.map((id) => String(id)))
+
+    if (candidateBatch.length === CANDIDATE_DELETE_BATCH_SIZE) {
+      // eslint-disable-next-line no-await-in-loop
+      await yieldToEventLoop()
+    }
+  }
 
   invalidateReferenceCaches()
   invalidateCache('/api/placements').catch(() => {})
   invalidateCache('/api/placements/summary').catch(() => {})
-  res.json({ message: 'Candidates deleted', deletedCount: candidates.length })
+  res.json({ message: 'Candidates deleted', deletedCount: deletedCandidateIds.length })
 }
 
 const deleteCompany = async (req, res) => {
