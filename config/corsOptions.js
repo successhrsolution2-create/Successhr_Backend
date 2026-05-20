@@ -1,7 +1,8 @@
-const defaultClientUrls =
-  process.env.NODE_ENV === 'production'
-    ? ['https://app.successhrsolutions.com', 'https://apply.successhrsolutions.com']
-    : ['http://localhost:5173']
+const defaultClientUrls = [
+  'https://app.successhrsolutions.com',
+  'https://apply.successhrsolutions.com',
+  ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:5173'])
+]
 
 const normalizeOrigin = (origin) => {
   if (!origin) return ''
