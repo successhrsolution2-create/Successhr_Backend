@@ -9,6 +9,12 @@ const { syncCmsFromCandidate } = require('../utils/candidateStatusSync')
 const { emitToAdmin, emitToBA } = require('../socket')
 const { uploadToS3 } = require('../utils/s3Upload')
 const { validateUploadFile } = require('../utils/fileValidation')
+const {
+  candidateDocumentAllowedExtensionsByKey,
+  candidateDocumentAllowedMimeTypesByKey,
+  candidateDocumentLabelByKey,
+  isCandidateDocumentKey
+} = require('../utils/candidateDocuments')
 const { invalidateCache } = require('../src/utils/invalidateCache')
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -188,6 +194,22 @@ const canAccess = (req, candidate) => {
 
 const ownerUserId = (candidate) => candidate?.submittedBy?._id || candidate?.submittedBy
 
+const asArray = (value) => {
+  if (Array.isArray(value)) return value
+  if (value === undefined || value === null || value === '') return []
+  return [value]
+}
+
+const documentTypeFromField = (fieldName) => {
+  const field = String(fieldName || '')
+  return field.startsWith('documents.') ? field.slice('documents.'.length) : ''
+}
+
+const resolveDocumentType = (req, file, index) => {
+  const documentType = String(asArray(req.body?.documentTypes)[index] || documentTypeFromField(file?.fieldname) || '').trim()
+  return isCandidateDocumentKey(documentType) ? documentType : ''
+}
+
 const resolveAdvisorDisplayName = async (advisor) => {
   const directName = String(advisor?.name || '').trim()
   if (directName) return directName
@@ -212,6 +234,7 @@ const buildCmsCandidatePayload = async (candidate, advisor) => {
     panNo: candidate.panNo,
     whatsappNo: candidate.whatsappNo,
     emailId: candidate.emailId,
+    dateOfBirth: candidate.dateOfBirth,
     gender: candidate.gender,
     currentAge: candidate.currentAge,
     currentAddress: candidate.currentAddress,
@@ -238,10 +261,15 @@ const buildCmsCandidatePayload = async (candidate, advisor) => {
     preferredIndustry: candidate.preferredIndustry,
     preferredJobLocation: candidate.preferredJobLocation,
     availabilityForInterview: candidate.availabilityForInterview,
+    interviewMode: candidate.interviewMode,
     reasonForJobChange: candidate.reasonForJobChange,
     currentJobLocation: candidate.currentJobLocation,
+    currentJobLocationOther: candidate.currentJobLocationOther,
+    currentJobLocationMidcArea: candidate.currentJobLocationMidcArea,
+    currentJobLocationMidcAreaOther: candidate.currentJobLocationMidcAreaOther,
     placementReference: candidate.placementReference,
     familyDetails: candidate.familyDetails,
+    applicationDetails: candidate.applicationDetails,
     goalAim: candidate.goalAim,
     feedback: candidate.feedback,
     suggestion: candidate.suggestion,
@@ -460,12 +488,27 @@ const uploadCandidateDocuments = async (req, res) => {
     return res.status(400).json({ message: 'At least one file is required' })
   }
 
-  for (const file of files) {
-    validateUploadFile(file)
+  for (const [index, file] of files.entries()) {
+    const documentType = resolveDocumentType(req, file, index)
+    if (documentType) {
+      validateUploadFile(file, {
+        allowedMimeTypes: candidateDocumentAllowedMimeTypesByKey[documentType],
+        allowedExtensions: candidateDocumentAllowedExtensionsByKey[documentType],
+        typeMessage: 'File type is not allowed for this document',
+        extensionMessage: 'File extension is not allowed for this document'
+      })
+    } else {
+      validateUploadFile(file)
+    }
+
     const fileUrl = await uploadToS3(file, 'candidate-documents')
     candidate.documents.push({
+      documentType: documentType || undefined,
+      documentLabel: documentType ? candidateDocumentLabelByKey[documentType] : undefined,
       fileName: file.originalname,
       fileUrl,
+      mimeType: file.mimetype,
+      size: file.size,
       uploadedAt: new Date()
     })
   }

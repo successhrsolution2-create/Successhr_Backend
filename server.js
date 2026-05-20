@@ -21,7 +21,33 @@ const cmsRoutes = require('./routes/cms/cmsRoutes')
 const publicRoutes = require('./routes/publicRoutes')
 const { verifyToken } = require('./middleware/authMiddleware')
 const { requireRole } = require('./middleware/roleMiddleware')
+const { cleanupTempUploads } = require('./middleware/uploadMiddleware')
+const { checkCrmRole, verifyCrmToken } = require('./crm/middleware/crm.auth.middleware')
 const { redis } = require('./src/config/redis')
+
+const BLOCKED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+const REQUIRED_ENV = ['MONGODB_URI', 'JWT_SECRET', 'CRM_JWT_SECRET']
+
+const validateEnvironment = () => {
+  const missing = REQUIRED_ENV.filter((key) => !process.env[key])
+
+  if (missing.length) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`)
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    const weakSecrets = ['JWT_SECRET', 'CRM_JWT_SECRET'].filter((key) => String(process.env[key] || '').length < 32)
+    if (weakSecrets.length) {
+      throw new Error(`Production secrets are too weak: ${weakSecrets.join(', ')}`)
+    }
+  }
+}
+
+const hasBlockedObjectKey = (value, depth = 0) => {
+  if (!value || typeof value !== 'object' || depth > 25) return false
+
+  return Object.entries(value).some(([key, item]) => BLOCKED_OBJECT_KEYS.has(key) || hasBlockedObjectKey(item, depth + 1))
+}
 
 const candidateDuplicateMessage = (message) => {
   const match = String(message || '').match(/^A candidate with this (mobile number|email|aadhaar number) already exists$/i)
@@ -34,6 +60,8 @@ const candidateDuplicateMessage = (message) => {
 const app = express()
 const server = http.createServer(app)
 
+validateEnvironment()
+
 const healthLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -42,16 +70,34 @@ const healthLimiter = rateLimit({
   message: { message: 'Too many requests. Please wait a moment.' }
 })
 
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: 'Too many requests. Please wait a moment.' }
-})
+const createApiLimiter = () =>
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: 'Too many requests. Please wait a moment.' }
+  })
+
+const apiLimiter = createApiLimiter()
+const crmApiLimiter = createApiLimiter()
+
+const requireCrmAdminAccess = (req, res, next) => {
+  const authHeader = req.headers.authorization || ''
+  const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice('Bearer '.length).trim() : null
+
+  if (bearerToken && bearerToken !== 'cookie') {
+    return verifyCrmToken(req, res, () => checkCrmRole(['crm_super_admin'])(req, res, next))
+  }
+
+  return verifyToken(req, res, () => requireRole('superAdmin')(req, res, next))
+}
 
 app.disable('x-powered-by')
-app.set("trust proxy", 1);
+app.set(
+  'trust proxy',
+  process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : process.env.NODE_ENV === 'production' ? 1 : false
+)
 
 const listen = (port) =>
   new Promise((resolve, reject) => {
@@ -86,9 +132,18 @@ app.use(
   })
 )
 app.use(compression())
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+app.use('/uploads', verifyToken, express.static(path.join(__dirname, 'uploads')))
 app.use(express.json({ limit: '2mb' }))
+app.use(cleanupTempUploads)
+app.use((req, res, next) => {
+  if (hasBlockedObjectKey(req.body) || hasBlockedObjectKey(req.query) || hasBlockedObjectKey(req.params)) {
+    return res.status(400).json({ message: 'Request contains unsupported object keys' })
+  }
+
+  return next()
+})
 app.use('/api', apiLimiter)
+app.use('/crm', crmApiLimiter)
 app.get('/api/health', healthLimiter, (_req, res) => {
   res.json({ ok: true })
 })
@@ -120,6 +175,8 @@ app.use('/api/students', studentRoutes)
 app.use('/api/companies', companyRoutes)
 app.use('/api/placements', placementRoutes)
 app.use('/api/cms', verifyToken, requireRole('superAdmin', 'candidateAdmin'), cmsRoutes)
+app.use('/crm/admin', requireCrmAdminAccess, require('./crm/routes/crm.admin.routes'))
+app.use('/crm', require('./crm/crm.routes'))
 
 app.use((req, res) => {
   res.status(404).json({ message: `Route not found: ${req.method} ${req.originalUrl}` })
@@ -170,6 +227,10 @@ app.use((error, _req, res, _next) => {
     return res.status(400).json({ message: 'Unexpected upload field' })
   }
 
+  if (['LIMIT_FIELD_VALUE', 'LIMIT_FIELD_COUNT', 'LIMIT_PART_COUNT'].includes(error.code)) {
+    return res.status(400).json({ message: 'Uploaded form is too large' })
+  }
+
   if (safeStatus < 500) {
     return res.status(safeStatus).json({
       message: error.publicMessage || error.message || 'Request failed'
@@ -194,7 +255,8 @@ const start = async () => {
 
   const envPort = process.env.PORT ? Number(process.env.PORT) : null
   const basePort = Number.isFinite(envPort) ? envPort : 5000
-  const maxAttempts = Number.isFinite(envPort) ? 1 : 11
+  const allowPortFallback = process.env.NODE_ENV !== 'production' && !Number.isFinite(envPort)
+  const maxAttempts = allowPortFallback ? 11 : 1
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const port = basePort + attempt
@@ -223,5 +285,14 @@ const start = async () => {
 
 start().catch((error) => {
   console.error(error)
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason)
+})
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error)
   process.exit(1)
 })

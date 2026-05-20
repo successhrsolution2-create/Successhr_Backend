@@ -1,4 +1,5 @@
 const path = require('path')
+const fs = require('fs')
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf'])
@@ -8,8 +9,26 @@ const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm'])
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png'])
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png'])
 
+const fileSignatureBytes = (file) => {
+  if (file?.buffer) return file.buffer
+  if (!file?.path) return null
+
+  try {
+    const descriptor = fs.openSync(file.path, 'r')
+    try {
+      const buffer = Buffer.alloc(16)
+      const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, 0)
+      return buffer.subarray(0, bytesRead)
+    } finally {
+      fs.closeSync(descriptor)
+    }
+  } catch (_error) {
+    return null
+  }
+}
+
 const hasValidSignature = (file) => {
-  const bytes = file?.buffer
+  const bytes = fileSignatureBytes(file)
   if (!bytes || bytes.length < 4) return false
 
   const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff

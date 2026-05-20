@@ -506,7 +506,7 @@ const downloadSharedSuccessRemarkPdf = async (req, res) => {
   if (shareToken.includes('.')) {
     let decoded
     try {
-      decoded = jwt.verify(shareToken, process.env.JWT_SECRET)
+      decoded = jwt.verify(shareToken, process.env.JWT_SECRET, { algorithms: ['HS256'] })
     } catch (_error) {
       return res.status(401).json({ message: 'Invalid or expired PDF link' })
     }

@@ -5,14 +5,17 @@ const userSchema = new mongoose.Schema(
     name: {
       type: String,
       required: true,
-      trim: true
+      trim: true,
+      maxlength: 120
     },
     email: {
       type: String,
       required: true,
       unique: true,
       lowercase: true,
-      trim: true
+      trim: true,
+      maxlength: 180,
+      match: /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     },
     password: {
       type: String,
@@ -35,6 +38,10 @@ const userSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true
+    },
+    tokenVersion: {
+      type: Number,
+      default: 0
     }
   },
   { timestamps: true }
@@ -43,6 +50,7 @@ const userSchema = new mongoose.Schema(
 userSchema.set('toJSON', {
   transform(_doc, ret) {
     delete ret.password
+    delete ret.tokenVersion
     delete ret.__v
     return ret
   }

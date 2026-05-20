@@ -21,7 +21,7 @@ router.use(verifyToken)
 
 router.route('/').get(cache(300), getCandidates).post(requireRole('businessAdvisor'), createCandidate)
 router.patch('/reorder', requireRole('superAdmin'), reorderCandidates)
-router.post('/:id/docs', requireRole('businessAdvisor', 'superAdmin'), upload.array('documents', 10), uploadCandidateDocuments)
+router.post('/:id/docs', requireRole('businessAdvisor', 'superAdmin'), upload.array('documents', 40), uploadCandidateDocuments)
 router.delete('/:id/docs/:docId', requireRole('superAdmin'), deleteCandidateDocument)
 router.patch('/:id/status', requireRole('superAdmin'), updateCandidateStatus)
 router

@@ -21,6 +21,7 @@ const {
   viewInterviewDocument,
   updateCompany,
   deleteCandidate,
+  bulkDeleteCandidates,
   deleteCompany,
   addInterview,
   listInterviews,
@@ -63,6 +64,7 @@ router.route('/candidates').get(listLimiter, listCandidates).post(createCandidat
 router.post('/candidates/import/preview', importLimiter, spreadsheetUpload.single('file'), previewImportCandidates)
 router.post('/candidates/import/confirm', importLimiter, confirmImportCandidates)
 router.post('/candidates/import', importLimiter, spreadsheetUpload.single('file'), importCandidates)
+router.delete('/candidates/bulk', bulkDeleteCandidates)
 router.route('/candidates/:id').get(getCandidateById).put(updateCandidate).delete(deleteCandidate)
 router.post('/candidates/:id/documents', uploadLimiter, candidateDocumentUpload.single('document'), uploadCandidateDocument)
 router.delete('/candidates/:id/documents/:docId', deleteCandidateDocument)

@@ -12,6 +12,7 @@ const isText = (value) => typeof value === 'string'
 const trimmedText = (value) => (isText(value) ? value.trim() : '')
 const isPlainObject = (value) => value === undefined || (value && typeof value === 'object' && !Array.isArray(value))
 const requestBody = (body) => (body && typeof body === 'object' && !Array.isArray(body) ? body : {})
+const PASSWORD_MAX_LENGTH = 72
 
 const validateBusinessAdvisorPayload = (rawBody = {}, { partial = false } = {}) => {
   const body = requestBody(rawBody)
@@ -24,6 +25,7 @@ const validateBusinessAdvisorPayload = (rawBody = {}, { partial = false } = {}) 
   if (name !== undefined && !trimmedText(name)) return 'Name must be text'
   if (email !== undefined && !trimmedText(email)) return 'Email must be text'
   if (password !== undefined && !isText(password)) return 'Password must be text'
+  if (isText(password) && password.length > PASSWORD_MAX_LENGTH) return `Password cannot exceed ${PASSWORD_MAX_LENGTH} characters`
   if (isActive !== undefined && typeof isActive !== 'boolean') return 'isActive must be true or false'
   if (!isPlainObject(documents)) return 'Documents must be an object'
   if (!isPlainObject(bankDetails)) return 'Bank details must be an object'
@@ -216,6 +218,10 @@ const resetBusinessAdvisorPassword = async (req, res) => {
     return res.status(400).json({ message: 'New password must be at least 6 characters' })
   }
 
+  if (newPassword.length > PASSWORD_MAX_LENGTH) {
+    return res.status(400).json({ message: `New password cannot exceed ${PASSWORD_MAX_LENGTH} characters` })
+  }
+
   const user = await User.findOne({ _id: req.params.id, role: 'businessAdvisor' }).select('+password')
 
   if (!user) {
@@ -223,6 +229,7 @@ const resetBusinessAdvisorPassword = async (req, res) => {
   }
 
   user.password = await bcrypt.hash(newPassword, 10)
+  user.tokenVersion = Number(user.tokenVersion || 0) + 1
   await user.save()
 
   await invalidateBusinessAdvisorCaches(user._id)

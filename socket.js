@@ -24,11 +24,15 @@ const setupSocket = (server) => {
         return next(new Error('Authentication token missing'))
       }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET)
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })
       const user = await User.findById(decoded.id)
 
       if (!user || !user.isActive) {
         return next(new Error('User is inactive or no longer exists'))
+      }
+
+      if (Number(decoded.tokenVersion ?? -1) !== Number(user.tokenVersion || 0)) {
+        return next(new Error('Token has been revoked'))
       }
 
       socket.user = user

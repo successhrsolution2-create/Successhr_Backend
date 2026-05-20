@@ -10,11 +10,15 @@ const verifyToken = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET)
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })
     const user = await User.findById(decoded.id)
 
     if (!user || !user.isActive) {
       return res.status(401).json({ message: 'User is inactive or no longer exists' })
+    }
+
+    if (Number(decoded.tokenVersion ?? -1) !== Number(user.tokenVersion || 0)) {
+      return res.status(401).json({ message: 'Token has been revoked' })
     }
 
     req.user = user

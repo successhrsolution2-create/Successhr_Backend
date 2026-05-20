@@ -64,11 +64,14 @@ const localContentType = (filePath) => {
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
   if (ext === '.png') return 'image/png'
   if (ext === '.pdf') return 'application/pdf'
+  if (ext === '.mp4') return 'video/mp4'
+  if (ext === '.mov') return 'video/quicktime'
+  if (ext === '.webm') return 'video/webm'
   return 'application/octet-stream'
 }
 
 const uploadToLocalDisk = async (file, folder = 'uploads') => {
-  if (!file?.buffer) {
+  if (!file?.buffer && !file?.path) {
     const error = new Error('Invalid file payload for upload')
     error.statusCode = 400
     throw error
@@ -80,7 +83,11 @@ const uploadToLocalDisk = async (file, folder = 'uploads') => {
   const uploadPath = path.join(uploadDir, fileName)
 
   await fsp.mkdir(uploadDir, { recursive: true })
-  await fsp.writeFile(uploadPath, file.buffer)
+  if (file.buffer) {
+    await fsp.writeFile(uploadPath, file.buffer)
+  } else {
+    await fsp.copyFile(file.path, uploadPath)
+  }
 
   return `${localUploadUrlPrefix}/${safeFolder}/${fileName}`
 }
@@ -118,7 +125,7 @@ const uploadToS3 = async (file, folder = 'uploads') => {
     return uploadToLocalDisk(file, folder)
   }
 
-  if (!file?.buffer) {
+  if (!file?.buffer && !file?.path) {
     const error = new Error('Invalid file payload for upload')
     error.statusCode = 400
     throw error
@@ -131,8 +138,9 @@ const uploadToS3 = async (file, folder = 'uploads') => {
       new PutObjectCommand({
         Bucket: process.env.AWS_S3_BUCKET,
         Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype
+        Body: file.buffer || fs.createReadStream(file.path),
+        ContentType: file.mimetype,
+        ContentLength: file.size
       })
     )
   } catch (err) {

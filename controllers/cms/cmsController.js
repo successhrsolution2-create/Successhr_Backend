@@ -6,6 +6,7 @@ const CmsRemark = require('../../models/cms/CmsRemark')
 const Candidate = require('../../models/Candidate')
 const Placement = require('../../models/Placement')
 const User = require('../../models/User')
+const mongoose = require('mongoose')
 const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
 const ExcelJS = require('exceljs')
@@ -137,16 +138,16 @@ const hasDirectorAssessmentApproval = async (req) => {
   if (!token) return false
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET)
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })
     if (decoded?.purpose !== 'director-assessment-approval' || !decoded?.id) return false
 
     const approver = await User.findOne({
       _id: decoded.id,
       role: 'superAdmin',
       isActive: true
-    }).select('_id')
+    }).select('_id tokenVersion')
 
-    return Boolean(approver)
+    return Boolean(approver) && Number(decoded.tokenVersion ?? -1) === Number(approver.tokenVersion || 0)
   } catch (_error) {
     return false
   }
@@ -879,6 +880,46 @@ const exactTextRegex = (value) => new RegExp(`^${escapeRegExp(value)}$`, 'i')
 const uniqueSortedText = (values) =>
   [...new Set((Array.isArray(values) ? values : []).map((value) => queryText(String(value || ''), 120)).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+const selectedOptionText = (value, otherValue) => {
+  const text = queryText(String(value || ''), 120)
+  return text === 'Other' ? queryText(String(otherValue || ''), 120) : text
+}
+const highestEducationFromCandidate = (candidate = {}) => {
+  const educationDetails = candidate.applicationDetails?.education || {}
+  const explicitValue = [
+    educationDetails.highestEducation,
+    selectedOptionText(educationDetails.educationSector, educationDetails.educationSectorOther),
+    selectedOptionText(candidate.educationSector, candidate.educationSectorOther)
+  ]
+    .map((value) => queryText(String(value || ''), 120))
+    .find(Boolean)
+
+  if (explicitValue) return explicitValue
+
+  const education = queryText(String(candidate.education || ''), 500)
+  const match = education.match(
+    /Highest Education(?: Like Graduate, Post Graduate)?:\s*(.*?)(?:\s*(?:Passing Year of Education|Education Branch|Education Specialization):|$)/is
+  )
+
+  return queryText(String(match?.[1] || education), 120)
+}
+const highestEducationDetailRegex = (value) =>
+  new RegExp(
+    `Highest Education(?: Like Graduate, Post Graduate)?:\\s*${escapeRegExp(value)}(?:\\s*(?:Passing Year of Education|Education Branch|Education Specialization):|\\s*$)`,
+    'i'
+  )
+const highestEducationFilterConditions = (value) => {
+  const exact = exactTextRegex(value)
+  return [
+    { 'applicationDetails.education.highestEducation': exact },
+    { 'applicationDetails.education.educationSector': exact },
+    { 'applicationDetails.education.educationSectorOther': exact },
+    { educationSector: exact },
+    { educationSectorOther: exact },
+    { education: exact },
+    { education: highestEducationDetailRegex(value) }
+  ]
+}
 const positiveInt = (value, fallback, max) => {
   const parsed = Number.parseInt(String(value || ''), 10)
   if (!Number.isFinite(parsed) || parsed < 1) return fallback
@@ -898,6 +939,16 @@ const addDateFilter = (query, value) => {
   const range = dateRangeFromKey(value)
   if (!range) return
   query.createdAt = { $gte: range.start, $lte: range.end }
+}
+
+const addDateRangeFilter = (query, fromValue, toValue) => {
+  const fromRange = dateRangeFromKey(fromValue)
+  const toRange = dateRangeFromKey(toValue)
+  if (!fromRange && !toRange) return
+
+  query.createdAt = {}
+  if (fromRange) query.createdAt.$gte = fromRange.start
+  if (toRange) query.createdAt.$lte = toRange.end
 }
 
 const createCompany = async (req, res) => {
@@ -950,12 +1001,20 @@ const listCandidates = async (req, res) => {
     query.gender = gender
   }
   if (education) {
-    query.education = exactTextRegex(education)
+    query.$and = [...(query.$and || []), { $or: highestEducationFilterConditions(education) }]
   }
   if (marriageStatus) {
     query.marriageStatus = marriageStatus
   }
-  addDateFilter(query, req.query.date)
+  if (req.query.date) {
+    addDateFilter(query, req.query.date)
+  } else {
+    addDateRangeFilter(
+      query,
+      req.query.dateFrom || req.query.startDate || req.query.from,
+      req.query.dateTo || req.query.endDate || req.query.to
+    )
+  }
 
   if (tile === 'today') {
     addDateFilter(query, new Date().toISOString().slice(0, 10))
@@ -1012,7 +1071,7 @@ const listCandidates = async (req, res) => {
     appliedForOptions,
     currentDesignationOptions,
     genderOptions,
-    educationOptions
+    educationOptionCandidates
   ] = await Promise.all([
     CmsCandidate.countDocuments(query),
     CmsCandidate.find(query)
@@ -1028,7 +1087,9 @@ const listCandidates = async (req, res) => {
     CmsCandidate.distinct('appliedFor'),
     CmsCandidate.distinct('currentDesignation'),
     CmsCandidate.distinct('gender'),
-    CmsCandidate.distinct('education')
+    CmsCandidate.find({})
+      .select('education applicationDetails educationSector educationSectorOther')
+      .lean()
   ])
 
   const candidateIds = candidates.map((candidate) => candidate._id)
@@ -1060,7 +1121,7 @@ const listCandidates = async (req, res) => {
       candidateIds: uniqueSortedText(candidateCodeOptions),
       jobRoles: uniqueSortedText([...(appliedForOptions || []), ...(currentDesignationOptions || [])]),
       genders: uniqueSortedText(genderOptions),
-      educations: uniqueSortedText(educationOptions)
+      educations: uniqueSortedText((educationOptionCandidates || []).map(highestEducationFromCandidate))
     }
   })
 }
@@ -1440,6 +1501,51 @@ const deleteCandidate = async (req, res) => {
   res.json({ message: 'Candidate deleted' })
 }
 
+const bulkDeleteCandidates = async (req, res) => {
+  await requireCandidateDeleteApproval(req)
+
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((id) => String(id || '').trim()).filter(Boolean)
+    : []
+  const uniqueIds = [...new Set(ids)].filter((id) => mongoose.Types.ObjectId.isValid(id))
+
+  if (uniqueIds.length === 0) {
+    return res.status(400).json({ message: 'Select at least one candidate to delete' })
+  }
+
+  const candidates = await CmsCandidate.find({ _id: { $in: uniqueIds } }).select('_id sourceCandidateId')
+
+  if (candidates.length === 0) {
+    return res.status(404).json({ message: 'Candidates not found' })
+  }
+
+  const candidateIds = candidates.map((candidate) => candidate._id)
+  const linkedCandidateIds = [
+    ...new Set(candidates.map((candidate) => candidate.sourceCandidateId).filter(Boolean).map((id) => String(id)))
+  ]
+
+  await Promise.all([
+    CmsInterview.deleteMany({ candidateId: { $in: candidateIds } }),
+    CmsRemark.deleteMany({ candidateId: { $in: candidateIds } }),
+    CmsPdfShare.deleteMany({ candidateId: { $in: candidateIds } }),
+    linkedCandidateIds.length
+      ? Placement.deleteMany({
+          $or: [
+            { candidateId: { $in: linkedCandidateIds } },
+            { studentId: { $in: linkedCandidateIds } }
+          ]
+        })
+      : Promise.resolve(),
+    linkedCandidateIds.length ? Candidate.deleteMany({ _id: { $in: linkedCandidateIds } }) : Promise.resolve(),
+    CmsCandidate.deleteMany({ _id: { $in: candidateIds } })
+  ])
+
+  invalidateReferenceCaches()
+  invalidateCache('/api/placements').catch(() => {})
+  invalidateCache('/api/placements/summary').catch(() => {})
+  res.json({ message: 'Candidates deleted', deletedCount: candidates.length })
+}
+
 const deleteCompany = async (req, res) => {
   const company = await CmsCompany.findById(req.params.id)
 
@@ -1624,6 +1730,7 @@ module.exports = {
   viewInterviewDocument,
   updateCompany,
   deleteCandidate,
+  bulkDeleteCandidates,
   deleteCompany,
   addInterview,
   listInterviews,

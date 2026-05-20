@@ -26,6 +26,7 @@ const candidateSchema = new mongoose.Schema(
     panNo: String,
     whatsappNo: String,
     emailId: String,
+    dateOfBirth: Date,
     gender: {
       type: String,
       enum: ['Male', 'Female', 'Other']
@@ -94,6 +95,10 @@ const candidateSchema = new mongoose.Schema(
     goalAim: String,
     feedback: String,
     suggestion: String,
+    applicationDetails: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({})
+    },
     successInfo: {
       hamiPatra: String,
       concernLetter: String,
