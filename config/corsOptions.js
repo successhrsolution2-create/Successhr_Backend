@@ -1,11 +1,28 @@
-const defaultClientUrl = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173'
+const defaultClientUrls =
+  process.env.NODE_ENV === 'production'
+    ? ['https://app.successhrsolutions.com', 'https://apply.successhrsolutions.com']
+    : ['http://localhost:5173']
+
+const normalizeOrigin = (origin) => {
+  if (!origin) return ''
+
+  try {
+    return new URL(origin).origin
+  } catch (_error) {
+    return String(origin).trim().replace(/\/+$/, '')
+  }
+}
 
 const configuredOrigins = new Set(
-  (process.env.CLIENT_URL || defaultClientUrl)
-    .split(',')
-    .map((origin) => origin.trim())
+  [...defaultClientUrls, ...(process.env.CLIENT_URL || '').split(',')]
+    .map((origin) => normalizeOrigin(origin))
     .filter(Boolean)
 )
+
+const allowedOriginSuffixes = (process.env.CLIENT_DOMAIN_SUFFIXES || '')
+    .split(',')
+    .map((domain) => domain.trim().toLowerCase().replace(/^\./, ''))
+    .filter(Boolean)
 
 const localDevOriginPattern =
   /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/
@@ -15,7 +32,21 @@ const allowLocalOrigins =
 
 const isAllowedOrigin = (origin) => {
   if (!origin) return true
-  return configuredOrigins.has(origin) || (allowLocalOrigins && localDevOriginPattern.test(origin))
+
+  const normalizedOrigin = normalizeOrigin(origin)
+  const hostname = (() => {
+    try {
+      return new URL(normalizedOrigin).hostname.toLowerCase()
+    } catch (_error) {
+      return ''
+    }
+  })()
+
+  return (
+    configuredOrigins.has(normalizedOrigin) ||
+    allowedOriginSuffixes.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`)) ||
+    (allowLocalOrigins && localDevOriginPattern.test(normalizedOrigin))
+  )
 }
 
 const corsOrigin = (origin, callback) => {
