@@ -3,6 +3,36 @@ const mongoose = require('mongoose')
 const statusValues = ['not_viewed', 'in_review', 'priority', 'done']
 const selectionStatuses = ['shortlisted', 'selected', 'joined', 'rejected', 'on_hold']
 
+const siblingDetailsSchema = new mongoose.Schema(
+  {
+    siblingName: String,
+    siblingEducation: String,
+    siblingMobileNumber: String,
+    siblingDateOfBirth: Date,
+    siblingAge: Number,
+    siblingGender: {
+      type: String,
+      enum: ['Male', 'Female', 'Other']
+    },
+    siblingStudyStandard: String,
+    siblingStudyStandardOther: String,
+    siblingCareerProfile: String,
+    siblingCareerProfileOther: String
+  },
+  { _id: false }
+)
+
+const candidateVisitSchema = new mongoose.Schema(
+  {
+    visitDateTime: String,
+    purpose: String,
+    purposeOther: String,
+    meetingStaffName: String,
+    communicationDetails: String
+  },
+  { _id: true }
+)
+
 const candidateSchema = new mongoose.Schema(
   {
     formMeta: {
@@ -89,6 +119,7 @@ const candidateSchema = new mongoose.Schema(
       siblingStudyStandardOther: String,
       siblingCareerProfile: String,
       siblingCareerProfileOther: String,
+      siblings: [siblingDetailsSchema],
       brotherOccupation: String,
       sisterOccupation: String
     },
@@ -99,6 +130,7 @@ const candidateSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: () => ({})
     },
+    candidateVisits: [candidateVisitSchema],
     successInfo: {
       hamiPatra: String,
       concernLetter: String,
@@ -120,6 +152,7 @@ const candidateSchema = new mongoose.Schema(
       witnessName: String,
       witnessMobileNumber: String,
       witnessEducation: String,
+      witnessEducationOther: String,
       witnessCareerProfile: String,
       witnessRelation: String,
       witnessRelationOther: String,
@@ -128,6 +161,7 @@ const candidateSchema = new mongoose.Schema(
           witnessName: String,
           witnessMobileNumber: String,
           witnessEducation: String,
+          witnessEducationOther: String,
           witnessCareerProfile: String,
           witnessRelation: String,
           witnessRelationOther: String

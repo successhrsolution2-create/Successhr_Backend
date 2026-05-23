@@ -17,6 +17,36 @@ const interviewQuestionSchema = new mongoose.Schema(
   { _id: false }
 )
 
+const siblingDetailsSchema = new mongoose.Schema(
+  {
+    siblingName: String,
+    siblingEducation: String,
+    siblingMobileNumber: String,
+    siblingDateOfBirth: Date,
+    siblingAge: Number,
+    siblingGender: {
+      type: String,
+      enum: ['Male', 'Female', 'Other']
+    },
+    siblingStudyStandard: String,
+    siblingStudyStandardOther: String,
+    siblingCareerProfile: String,
+    siblingCareerProfileOther: String
+  },
+  { _id: false }
+)
+
+const candidateVisitSchema = new mongoose.Schema(
+  {
+    visitDateTime: String,
+    purpose: String,
+    purposeOther: String,
+    meetingStaffName: String,
+    communicationDetails: String
+  },
+  { _id: true }
+)
+
 const cmsCandidateSchema = new mongoose.Schema(
   {
     formMeta: {
@@ -100,6 +130,7 @@ const cmsCandidateSchema = new mongoose.Schema(
       siblingStudyStandardOther: String,
       siblingCareerProfile: String,
       siblingCareerProfileOther: String,
+      siblings: [siblingDetailsSchema],
       brotherOccupation: String,
       sisterOccupation: String
     },
@@ -107,6 +138,7 @@ const cmsCandidateSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: () => ({})
     },
+    candidateVisits: [candidateVisitSchema],
     goalAim: String,
     feedback: String,
     suggestion: String,
@@ -132,6 +164,7 @@ const cmsCandidateSchema = new mongoose.Schema(
       witnessName: String,
       witnessMobileNumber: String,
       witnessEducation: String,
+      witnessEducationOther: String,
       witnessCareerProfile: String,
       witnessRelation: String,
       witnessRelationOther: String,
@@ -140,6 +173,7 @@ const cmsCandidateSchema = new mongoose.Schema(
           witnessName: String,
           witnessMobileNumber: String,
           witnessEducation: String,
+          witnessEducationOther: String,
           witnessCareerProfile: String,
           witnessRelation: String,
           witnessRelationOther: String
@@ -163,6 +197,10 @@ const cmsCandidateSchema = new mongoose.Schema(
         }
       }
     ],
+    documentAvailability: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({})
+    },
     interviewForm: {
       suitableIndustry: String,
       suitableDepartment: String,

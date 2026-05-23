@@ -34,6 +34,63 @@ const pickOption = (value, options) => {
   const normalized = String(value || '').trim()
   return options.includes(normalized) ? normalized : undefined
 }
+const normalizeSiblingDetails = (value = {}) => {
+  const sibling = {
+    siblingName: text(value.siblingName),
+    siblingEducation: text(value.siblingEducation || value.siblingEducationOccupation),
+    siblingMobileNumber: toDigits(value.siblingMobileNumber) || undefined,
+    siblingDateOfBirth: value.siblingDateOfBirth || undefined,
+    siblingAge: parseOptionalNumber(value.siblingAge),
+    siblingGender: pickOption(value.siblingGender, ['Male', 'Female', 'Other']),
+    siblingCareerProfile: text(value.siblingCareerProfile),
+    siblingStudyStandard: value.siblingCareerProfile === 'Studying' ? text(value.siblingStudyStandard) : '',
+    siblingStudyStandardOther: value.siblingCareerProfile === 'Studying' && value.siblingStudyStandard === 'Other' ? text(value.siblingStudyStandardOther) : '',
+    siblingCareerProfileOther: value.siblingCareerProfile === 'Other' ? text(value.siblingCareerProfileOther) : ''
+  }
+
+  return sibling
+}
+const siblingHasValue = (sibling = {}) =>
+  Object.values(sibling).some((value) => value !== undefined && value !== null && String(value).trim() !== '')
+const parseSiblingArray = (value) => {
+  if (Array.isArray(value)) return value
+  if (typeof value !== 'string') return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed : []
+  } catch (_error) {
+    return []
+  }
+}
+const getSiblingList = (payload = {}) => {
+  const family = payload.familyDetails || {}
+  const rawSiblings = parseSiblingArray(family.siblings).length
+    ? parseSiblingArray(family.siblings)
+    : parseSiblingArray(payload.siblings)
+
+  const siblings = rawSiblings
+    .map((item) => normalizeSiblingDetails(item))
+    .filter(siblingHasValue)
+
+  if (!siblings.length) {
+    const legacySibling = normalizeSiblingDetails({
+      siblingName: payload.siblingName || family.siblingName,
+      siblingEducation: payload.siblingEducation || family.siblingEducation || payload.siblingEducationOccupation || family.siblingEducationOccupation,
+      siblingMobileNumber: payload.siblingMobileNumber || family.siblingMobileNumber,
+      siblingDateOfBirth: payload.siblingDateOfBirth || family.siblingDateOfBirth,
+      siblingAge: payload.siblingAge || family.siblingAge,
+      siblingGender: payload.siblingGender || family.siblingGender,
+      siblingCareerProfile: payload.siblingCareerProfile || family.siblingCareerProfile,
+      siblingStudyStandard: payload.siblingStudyStandard || family.siblingStudyStandard,
+      siblingStudyStandardOther: payload.siblingStudyStandardOther || family.siblingStudyStandardOther,
+      siblingCareerProfileOther: payload.siblingCareerProfileOther || family.siblingCareerProfileOther
+    })
+
+    if (siblingHasValue(legacySibling)) siblings.push(legacySibling)
+  }
+
+  return siblings
+}
 
 const parseApplicationDetails = (value) => {
   if (!value) return {}
@@ -132,6 +189,9 @@ const normalizeApplicationPayload = (body) => {
     : ''
   payload.availabilityForInterview = text(payload.availabilityForInterview)
   payload.interviewMode = text(payload.interviewMode)
+  const siblings = getSiblingList(payload)
+  const firstSibling = siblings[0] || {}
+
   payload.familyDetails = {
     fatherOrHusbandName: text(payload.fatherOrHusbandName || payload.familyDetails?.fatherOrHusbandName),
     fatherOccupation: text(payload.fatherOccupation || payload.familyDetails?.fatherOccupation),
@@ -139,16 +199,17 @@ const normalizeApplicationPayload = (body) => {
     motherOrWifeName: text(payload.motherOrWifeName || payload.familyDetails?.motherOrWifeName),
     motherOccupation: text(payload.motherOccupation || payload.familyDetails?.motherOccupation),
     motherMobileNumber: toDigits(payload.motherMobileNumber || payload.familyDetails?.motherMobileNumber) || undefined,
-    siblingName: text(payload.siblingName || payload.familyDetails?.siblingName),
-    siblingEducation: text(payload.siblingEducation || payload.familyDetails?.siblingEducation || payload.siblingEducationOccupation || payload.familyDetails?.siblingEducationOccupation),
-    siblingMobileNumber: toDigits(payload.siblingMobileNumber || payload.familyDetails?.siblingMobileNumber) || undefined,
-    siblingDateOfBirth: payload.siblingDateOfBirth || payload.familyDetails?.siblingDateOfBirth || undefined,
-    siblingAge: parseOptionalNumber(payload.siblingAge || payload.familyDetails?.siblingAge),
-    siblingGender: pickOption(payload.siblingGender || payload.familyDetails?.siblingGender, ['Male', 'Female', 'Other']),
-    siblingStudyStandard: text(payload.siblingStudyStandard || payload.familyDetails?.siblingStudyStandard),
-    siblingStudyStandardOther: text(payload.siblingStudyStandardOther || payload.familyDetails?.siblingStudyStandardOther),
-    siblingCareerProfile: text(payload.siblingCareerProfile || payload.familyDetails?.siblingCareerProfile),
-    siblingCareerProfileOther: text(payload.siblingCareerProfileOther || payload.familyDetails?.siblingCareerProfileOther),
+    siblingName: text(firstSibling.siblingName),
+    siblingEducation: text(firstSibling.siblingEducation),
+    siblingMobileNumber: firstSibling.siblingMobileNumber,
+    siblingDateOfBirth: firstSibling.siblingDateOfBirth,
+    siblingAge: firstSibling.siblingAge,
+    siblingGender: firstSibling.siblingGender,
+    siblingStudyStandard: text(firstSibling.siblingStudyStandard),
+    siblingStudyStandardOther: text(firstSibling.siblingStudyStandardOther),
+    siblingCareerProfile: text(firstSibling.siblingCareerProfile),
+    siblingCareerProfileOther: text(firstSibling.siblingCareerProfileOther),
+    siblings,
     brotherOccupation: text(payload.familyDetails?.brotherOccupation),
     sisterOccupation: text(payload.familyDetails?.sisterOccupation)
   }
@@ -199,7 +260,8 @@ const normalizeApplicationPayload = (body) => {
     [payload.placementReference.referenceContactNumber, 'Reference contact number'],
     [payload.familyDetails.fatherMobileNumber, 'Father mobile number'],
     [payload.familyDetails.motherMobileNumber, 'Mother mobile number'],
-    [payload.familyDetails.siblingMobileNumber, 'Sibling mobile number']
+    [payload.familyDetails.siblingMobileNumber, 'Sibling mobile number'],
+    ...payload.familyDetails.siblings.map((sibling, index) => [sibling.siblingMobileNumber, `Sibling ${index + 1} mobile number`])
   ]
 
   for (const [value, label] of contactChecks) {

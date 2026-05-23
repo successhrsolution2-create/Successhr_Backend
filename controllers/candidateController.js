@@ -74,6 +74,8 @@ const candidateConflict = (message) => {
   return error
 }
 
+const sameMongoId = (left, right) => String(left || '') === String(right || '')
+
 const invalidateCandidateCaches = () =>
   Promise.all([
     invalidateCache('/api/candidates').catch(() => 0),
@@ -137,8 +139,14 @@ const ensureUniqueCandidateIdentity = async (payload, excludeId, options = {}) =
 
     if (checkCms) {
       const cmsQuery = { [check.field]: check.value }
-      const existingCms = await CmsCandidate.findOne(cmsQuery).select('_id candidateCode fullName')
-      if (existingCms) {
+      if (options.cmsExcludeId) {
+        cmsQuery._id = { $ne: options.cmsExcludeId }
+      }
+      const existingCmsCandidates = await CmsCandidate.find(cmsQuery).select('_id candidateCode fullName sourceCandidateId').limit(5)
+      const conflictingCmsCandidate = existingCmsCandidates.find(
+        (item) => !sameMongoId(item.sourceCandidateId, options.cmsExcludeSourceCandidateId)
+      )
+      if (conflictingCmsCandidate) {
         throw candidateConflict(`A candidate with this ${check.label} already exists`)
       }
     }
@@ -270,6 +278,7 @@ const buildCmsCandidatePayload = async (candidate, advisor) => {
     placementReference: candidate.placementReference,
     familyDetails: candidate.familyDetails,
     applicationDetails: candidate.applicationDetails,
+    candidateVisits: candidate.candidateVisits,
     goalAim: candidate.goalAim,
     feedback: candidate.feedback,
     suggestion: candidate.suggestion,
@@ -410,7 +419,10 @@ const updateCandidate = async (req, res) => {
   })
 
   normalizeCandidateIdentity(candidate)
-  await ensureUniqueCandidateIdentity(candidate, candidate._id)
+  await ensureUniqueCandidateIdentity(candidate, candidate._id, {
+    checkCms: true,
+    cmsExcludeSourceCandidateId: candidate._id
+  })
 
   await candidate.save()
   const savedCandidate = await Candidate.findById(candidate._id).populate('submittedBy', 'name email')

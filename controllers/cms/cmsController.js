@@ -97,6 +97,7 @@ const ensureRemark = async (candidateId) => {
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
+const trimText = (value) => String(value || '').trim()
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 const directorAssessmentKeys = [
   'classOfCandidate',
@@ -244,7 +245,9 @@ const normalizeCandidateIdentity = (payload) => {
   payload.emailId = normalizedEmail || undefined
 }
 
-const ensureUniqueCandidateIdentity = async (payload) => {
+const sameMongoId = (left, right) => String(left || '') === String(right || '')
+
+const ensureUniqueCandidateIdentity = async (payload, exclude = {}) => {
   const checks = [
     { field: 'mobileNumber', label: 'mobile number', value: payload.mobileNumber },
     { field: 'emailId', label: 'email', value: payload.emailId },
@@ -252,12 +255,23 @@ const ensureUniqueCandidateIdentity = async (payload) => {
   ].filter((item) => item.value)
 
   for (const check of checks) {
+    const cmsQuery = { [check.field]: check.value }
+    if (exclude.cmsCandidateId) {
+      cmsQuery._id = { $ne: exclude.cmsCandidateId }
+    }
+
+    const candidateQuery = { [check.field]: check.value }
+    if (exclude.sourceCandidateId) {
+      candidateQuery._id = { $ne: exclude.sourceCandidateId }
+    }
+
     const [existingCms, existingCandidate] = await Promise.all([
-      CmsCandidate.findOne({ [check.field]: check.value }).select('_id'),
-      Candidate.findOne({ [check.field]: check.value }).select('_id')
+      CmsCandidate.findOne(cmsQuery).select('_id candidateCode fullName'),
+      Candidate.findOne(candidateQuery).select('_id candidateName mobileNumber emailId aadhaarNo')
     ])
 
-    if (existingCms || existingCandidate) {
+    const isLinkedCandidate = existingCandidate && sameMongoId(existingCandidate._id, exclude.sourceCandidateId)
+    if (existingCms || (existingCandidate && !isLinkedCandidate)) {
       const error = new Error(`A candidate with this ${check.label} already exists`)
       error.statusCode = 409
       throw error
@@ -305,7 +319,127 @@ const ensureUniqueCmsCompanyIdentity = async (payload, excludeId) => {
   }
 }
 
+const normalizeDocumentAvailability = (value = {}) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+
+  return Object.entries(value).reduce((acc, [key, enabled]) => {
+    if (isCandidateDocumentKey(key)) {
+      acc[key] = enabled === true || enabled === 'true' || enabled === 'Yes' || enabled === 'yes'
+    }
+    return acc
+  }, {})
+}
+
+const normalizeSiblingDetails = (value = {}) => {
+  const careerProfile = trimText(value.siblingCareerProfile)
+  const studyStandard = trimText(value.siblingStudyStandard)
+  const siblingAge = Number(value.siblingAge)
+
+  return {
+    siblingName: trimText(value.siblingName),
+    siblingEducation: trimText(value.siblingEducation || value.siblingEducationOccupation),
+    siblingMobileNumber: toDigits(value.siblingMobileNumber) || undefined,
+    siblingDateOfBirth: value.siblingDateOfBirth || undefined,
+    siblingAge: value.siblingAge === '' || value.siblingAge === undefined || value.siblingAge === null || !Number.isFinite(siblingAge) ? undefined : siblingAge,
+    siblingGender: ['Male', 'Female', 'Other'].includes(value.siblingGender) ? value.siblingGender : undefined,
+    siblingCareerProfile: careerProfile,
+    siblingStudyStandard: careerProfile === 'Studying' ? studyStandard : '',
+    siblingStudyStandardOther: careerProfile === 'Studying' && studyStandard === 'Other' ? trimText(value.siblingStudyStandardOther) : '',
+    siblingCareerProfileOther: careerProfile === 'Other' ? trimText(value.siblingCareerProfileOther) : ''
+  }
+}
+
+const siblingHasValue = (sibling = {}) =>
+  Object.values(sibling).some((value) => value !== undefined && value !== null && String(value).trim() !== '')
+
+const normalizeCandidateVisit = (value = {}) => ({
+  visitDateTime: trimText(value.visitDateTime || value.dateTime || value.date),
+  purpose: trimText(value.purpose),
+  purposeOther: trimText(value.purposeOther),
+  meetingStaffName: trimText(value.meetingStaffName || value.staffName),
+  communicationDetails: trimText(value.communicationDetails || value.communication)
+})
+
+const candidateVisitHasValue = (visit = {}) =>
+  Object.values(visit).some((value) => value !== undefined && value !== null && String(value).trim() !== '')
+
+const normalizeCandidateVisits = (visits) =>
+  (Array.isArray(visits) ? visits : [])
+    .map((visit) => normalizeCandidateVisit(visit))
+    .filter(candidateVisitHasValue)
+
+const normalizeFamilyDetails = (familyDetails = {}) => {
+  const rawFamily = familyDetails && typeof familyDetails === 'object' && !Array.isArray(familyDetails) ? familyDetails : {}
+  const rawSiblings = Array.isArray(rawFamily.siblings) ? rawFamily.siblings : []
+  const siblings = rawSiblings
+    .map((item) => normalizeSiblingDetails(item))
+    .filter(siblingHasValue)
+
+  if (!siblings.length) {
+    const legacySibling = normalizeSiblingDetails(rawFamily)
+    if (siblingHasValue(legacySibling)) siblings.push(legacySibling)
+  }
+
+  const firstSibling = siblings[0] || {}
+
+  return {
+    ...rawFamily,
+    siblingName: trimText(firstSibling.siblingName),
+    siblingEducation: trimText(firstSibling.siblingEducation),
+    siblingMobileNumber: firstSibling.siblingMobileNumber,
+    siblingDateOfBirth: firstSibling.siblingDateOfBirth,
+    siblingAge: firstSibling.siblingAge,
+    siblingGender: firstSibling.siblingGender,
+    siblingCareerProfile: trimText(firstSibling.siblingCareerProfile),
+    siblingStudyStandard: trimText(firstSibling.siblingStudyStandard),
+    siblingStudyStandardOther: trimText(firstSibling.siblingStudyStandardOther),
+    siblingCareerProfileOther: trimText(firstSibling.siblingCareerProfileOther),
+    siblings
+  }
+}
+
+const removeBlankOptionalValues = (object, keys = []) => {
+  if (!object || typeof object !== 'object') return
+  keys.forEach((key) => {
+    if (object[key] === '') {
+      delete object[key]
+    }
+  })
+}
+
+const normalizeOptionalCandidateFields = (payload = {}) => {
+  removeBlankOptionalValues(payload, [
+    'gender',
+    'marriageStatus',
+    'dateOfBirth',
+    'advisor',
+    'sourceCandidateId'
+  ])
+  removeBlankOptionalValues(payload.formMeta, ['date'])
+}
+
+const normalizeCandidatePayload = (payload = {}) => {
+  if (Object.prototype.hasOwnProperty.call(payload, 'documentAvailability')) {
+    payload.documentAvailability = normalizeDocumentAvailability(payload.documentAvailability)
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'candidateVisits')) {
+    payload.candidateVisits = normalizeCandidateVisits(payload.candidateVisits)
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'familyDetails')) {
+    payload.familyDetails = normalizeFamilyDetails(payload.familyDetails)
+  }
+  if (payload.applicationDetails?.personal?.familyDetails) {
+    payload.applicationDetails.personal.familyDetails = normalizeFamilyDetails(payload.applicationDetails.personal.familyDetails)
+  }
+  if (payload.applicationDetails?.candidateVisits) {
+    payload.applicationDetails.candidateVisits = normalizeCandidateVisits(payload.applicationDetails.candidateVisits)
+  }
+  normalizeOptionalCandidateFields(payload)
+  return payload
+}
+
 const createCandidate = async (req, res) => {
+  normalizeCandidatePayload(req.body)
   normalizeCandidateIdentity(req.body)
   await ensureUniqueCandidateIdentity(req.body)
   await requireDirectorAssessmentApproval(
@@ -899,6 +1033,21 @@ const withResolvedReference = (candidateDoc) => {
   return candidate
 }
 
+const isStrictObjectId = (value) => /^[a-fA-F0-9]{24}$/.test(String(value || ''))
+
+const candidateRouteIdQuery = (value) => {
+  if (!isStrictObjectId(value)) return null
+  const objectId = new mongoose.Types.ObjectId(String(value))
+  return { $or: [{ _id: objectId }, { sourceCandidateId: objectId }] }
+}
+
+const findCmsCandidateByRouteId = (value, select = '') => {
+  const query = candidateRouteIdQuery(value)
+  if (!query) return null
+  const finder = CmsCandidate.findOne(query)
+  return select ? finder.select(select) : finder
+}
+
 const queryText = (value, maxLength = 120) => {
   if (typeof value !== 'string') return ''
   return value.trim().slice(0, maxLength)
@@ -980,6 +1129,35 @@ const addDateRangeFilter = (query, fromValue, toValue) => {
   if (toRange) query.createdAt.$lte = toRange.end
 }
 
+const visitDateRangeFromKey = (value) => {
+  const key = queryText(value, 20)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null
+  return {
+    start: `${key}T00:00`,
+    end: `${key}T23:59:59.999`
+  }
+}
+
+const addVisitDateRangeFilter = (query, fromValue, toValue) => {
+  const fromRange = visitDateRangeFromKey(fromValue)
+  const toRange = visitDateRangeFromKey(toValue)
+  if (!fromRange && !toRange) return
+
+  const visitDateTime = {}
+  if (fromRange) visitDateTime.$gte = fromRange.start
+  if (toRange) visitDateTime.$lte = toRange.end
+
+  query.$and = [
+    ...(query.$and || []),
+    {
+      $or: [
+        { candidateVisits: { $elemMatch: { visitDateTime } } },
+        { 'applicationDetails.candidateVisits': { $elemMatch: { visitDateTime } } }
+      ]
+    }
+  ]
+}
+
 const createCompany = async (req, res) => {
   normalizeCompanyIdentity(req.body)
   await ensureUniqueCmsCompanyIdentity(req.body)
@@ -1016,7 +1194,17 @@ const listCandidates = async (req, res) => {
       { appliedFor: regex },
       { currentDesignation: regex },
       { education: regex },
-      { gender: regex }
+      { gender: regex },
+      { 'candidateVisits.visitDateTime': regex },
+      { 'candidateVisits.purpose': regex },
+      { 'candidateVisits.purposeOther': regex },
+      { 'candidateVisits.meetingStaffName': regex },
+      { 'candidateVisits.communicationDetails': regex },
+      { 'applicationDetails.candidateVisits.visitDateTime': regex },
+      { 'applicationDetails.candidateVisits.purpose': regex },
+      { 'applicationDetails.candidateVisits.purposeOther': regex },
+      { 'applicationDetails.candidateVisits.meetingStaffName': regex },
+      { 'applicationDetails.candidateVisits.communicationDetails': regex }
     ]
   }
   if (candidateId) {
@@ -1044,6 +1232,11 @@ const listCandidates = async (req, res) => {
       req.query.dateTo || req.query.endDate || req.query.to
     )
   }
+  addVisitDateRangeFilter(
+    query,
+    req.query.visitDateFrom || req.query.visitStartDate || req.query.visitFrom,
+    req.query.visitDateTo || req.query.visitEndDate || req.query.visitTo
+  )
 
   if (tile === 'today') {
     addDateFilter(query, new Date().toISOString().slice(0, 10))
@@ -1178,9 +1371,12 @@ const listCompanies = async (req, res) => {
 }
 
 const getCandidateById = async (req, res) => {
-  const candidateDoc = await CmsCandidate.findById(req.params.id)
-    .populate('createdBy', 'name email')
-    .populate('advisor', 'name email advisorCode')
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id)
+  const candidateDoc = candidateQuery
+    ? await candidateQuery
+        .populate('createdBy', 'name email')
+        .populate('advisor', 'name email advisorCode')
+    : null
   const candidate = withResolvedReference(candidateDoc)
 
   if (!candidate) {
@@ -1206,11 +1402,19 @@ const getCompanyById = async (req, res) => {
 }
 
 const updateCandidate = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id)
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id)
+  const candidate = candidateQuery ? await candidateQuery : null
 
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
+
+  normalizeCandidatePayload(req.body)
+  normalizeCandidateIdentity(req.body)
+  await ensureUniqueCandidateIdentity(req.body, {
+    cmsCandidateId: candidate._id,
+    sourceCandidateId: candidate.sourceCandidateId
+  })
 
   await requireDirectorAssessmentApproval(req, hasDirectorAssessmentChanged(candidate, req.body || {}))
 
@@ -1227,7 +1431,8 @@ const updateCandidate = async (req, res) => {
 }
 
 const uploadCandidateDocument = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id)
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id)
+  const candidate = candidateQuery ? await candidateQuery : null
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
@@ -1266,7 +1471,8 @@ const uploadCandidateDocument = async (req, res) => {
 }
 
 const deleteCandidateDocument = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id)
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id)
+  const candidate = candidateQuery ? await candidateQuery : null
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
@@ -1284,7 +1490,8 @@ const deleteCandidateDocument = async (req, res) => {
 }
 
 const viewCandidateDocument = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id).select('documents')
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id, 'documents')
+  const candidate = candidateQuery ? await candidateQuery : null
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
@@ -1338,7 +1545,8 @@ const sendSuccessRemarkPdf = (res, candidate, disposition = 'attachment') => {
 }
 
 const downloadSuccessRemarkPdf = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id)
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id)
+  const candidate = candidateQuery ? await candidateQuery : null
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
@@ -1347,7 +1555,8 @@ const downloadSuccessRemarkPdf = async (req, res) => {
 }
 
 const createSuccessRemarkShareLink = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id).select('_id')
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id, '_id')
+  const candidate = candidateQuery ? await candidateQuery : null
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
@@ -1502,7 +1711,8 @@ const updateCompany = async (req, res) => {
 const deleteCandidate = async (req, res) => {
   await requireCandidateDeleteApproval(req)
 
-  const candidate = await CmsCandidate.findById(req.params.id).select('_id sourceCandidateId').lean()
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id, '_id sourceCandidateId')
+  const candidate = candidateQuery ? await candidateQuery.lean() : null
 
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
@@ -1602,13 +1812,14 @@ const interviewPayloadFromBody = (body = {}, candidate = null) => ({
 })
 
 const addInterview = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id)
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id)
+  const candidate = candidateQuery ? await candidateQuery : null
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
 
   const interview = await CmsInterview.create({
-    candidateId: req.params.id,
+    candidateId: candidate._id,
     ...interviewPayloadFromBody(req.body, candidate)
   })
 
@@ -1616,7 +1827,13 @@ const addInterview = async (req, res) => {
 }
 
 const listInterviews = async (req, res) => {
-  const interviews = await CmsInterview.find({ candidateId: req.params.id }).sort({ interviewDate: -1, createdAt: -1 })
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id, '_id')
+  const candidate = candidateQuery ? await candidateQuery : null
+  if (!candidate) {
+    return res.status(404).json({ message: 'Candidate not found' })
+  }
+
+  const interviews = await CmsInterview.find({ candidateId: candidate._id }).sort({ interviewDate: -1, createdAt: -1 })
   res.json(interviews)
 }
 
@@ -1648,7 +1865,8 @@ const deleteInterview = async (req, res) => {
 }
 
 const getRemarks = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id).select('_id')
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id, '_id')
+  const candidate = candidateQuery ? await candidateQuery : null
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }
@@ -1658,7 +1876,8 @@ const getRemarks = async (req, res) => {
 }
 
 const updateRemarks = async (req, res) => {
-  const candidate = await CmsCandidate.findById(req.params.id)
+  const candidateQuery = findCmsCandidateByRouteId(req.params.id)
+  const candidate = candidateQuery ? await candidateQuery : null
   if (!candidate) {
     return res.status(404).json({ message: 'Candidate not found' })
   }

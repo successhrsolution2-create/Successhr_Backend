@@ -106,6 +106,18 @@ const candidateDocumentTypes = [
     allowedExtensions: letterExtensions
   },
   {
+    key: 'sapCertification',
+    label: 'SAP Certification',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'cCppCertification',
+    label: 'C/C++ Certification',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
     key: 'computerCourseCertificate',
     label: 'Other Computer Course Certificate',
     allowedMimeTypes: letterMimeTypes,
@@ -147,7 +159,7 @@ const successDocumentTypes = [
   },
   {
     key: 'hamiPatra',
-    label: 'HP - Hami Patra',
+    label: 'Registration Declaration Form',
     allowedMimeTypes: letterMimeTypes,
     allowedExtensions: letterExtensions
   },
@@ -165,7 +177,13 @@ const successDocumentTypes = [
   },
   {
     key: 'jobJoiningHamiPatra',
-    label: 'Job Joining Hami Patra',
+    label: 'Job Joining Declaration Form',
+    allowedMimeTypes: letterMimeTypes,
+    allowedExtensions: letterExtensions
+  },
+  {
+    key: 'jobJoiningDocumentLetter',
+    label: 'Job Joining Document Letter',
     allowedMimeTypes: letterMimeTypes,
     allowedExtensions: letterExtensions
   }

@@ -1,7 +1,49 @@
+# Dependencies
 node_modules/
+.pnpm-store/
+
+# Environment / secrets
 .env
+.env.*
+!.env.example
+
+# Build output
 dist/
 build/
+coverage/
+.nyc_output/
+
+# Logs and runtime files
+logs/
 *.log
-uploads
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.pid.lock
+pids/
+
+# Local uploads and temporary files
+uploads/
 tmp/
+temp/
+.cache/
+
+# Tests are not needed on production deploys
+__tests__/
+jest*.log
+
+# Local editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local backup/archive artifacts
+*.bak
+*.backup
+*.zip
+*.tar
+*.tar.gz
+*.tgz

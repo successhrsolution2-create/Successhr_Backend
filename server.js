@@ -174,9 +174,12 @@ app.use('/api/candidates', candidateRoutes)
 app.use('/api/students', studentRoutes)
 app.use('/api/companies', companyRoutes)
 app.use('/api/placements', placementRoutes)
+app.use('/api/super-admin', require('./routes/superAdminRoutes'))
 app.use('/api/cms', verifyToken, requireRole('superAdmin', 'candidateAdmin'), cmsRoutes)
+app.use('/api/ems', require('./ems/routes/index'))
 app.use('/crm/admin', requireCrmAdminAccess, require('./crm/routes/crm.admin.routes'))
 app.use('/crm', require('./crm/crm.routes'))
+app.use('/backup', require('./backup/backup.routes'))
 
 app.use((req, res) => {
   res.status(404).json({ message: `Route not found: ${req.method} ${req.originalUrl}` })

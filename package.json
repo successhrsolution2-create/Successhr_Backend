@@ -6,6 +6,15 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "test": "cross-env NODE_ENV=test jest --config __tests__/setup/jest.config.js --runInBand",
+    "test:watch": "jest --config __tests__/setup/jest.config.js --watch",
+    "test:coverage": "jest --config __tests__/setup/jest.config.js --coverage",
+    "test:auth": "jest --config __tests__/setup/jest.config.js __tests__/auth --runInBand",
+    "test:advisor": "jest --config __tests__/setup/jest.config.js __tests__/advisor --runInBand",
+    "test:crm": "jest --config __tests__/setup/jest.config.js __tests__/crm --runInBand",
+    "test:ems": "jest --config __tests__/setup/jest.config.js __tests__/ems --runInBand",
+    "test:payroll": "jest --config __tests__/setup/jest.config.js __tests__/payroll --runInBand",
+    "test:security": "jest --config __tests__/setup/jest.config.js __tests__/security --runInBand",
     "migrate:atlas": "node scripts/migrate-local-to-atlas.js",
     "migrate:candidates": "node scripts/migrate-candidates.js",
     "cleanup:public-apply": "node scripts/cleanup-public-apply-orphans.js",
@@ -27,10 +36,19 @@
     "express": "^4.22.1",
     "express-async-errors": "^3.1.1",
     "express-rate-limit": "^8.5.1",
+    "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.6.1",
     "multer": "^2.1.1",
     "nodemon": "^3.1.14",
     "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "@faker-js/faker": "^10.4.0",
+    "@jest/globals": "^30.4.1",
+    "cross-env": "^10.1.0",
+    "jest": "^30.4.2",
+    "mongodb-memory-server": "^11.1.0",
+    "supertest": "^7.2.2"
   }
 }

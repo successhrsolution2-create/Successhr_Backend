@@ -92,6 +92,7 @@ const syncCmsFromCandidate = async (candidateOrId) => {
   if (candidate.reasonForJobChange !== undefined) cmsCandidate.reasonForJobChange = candidate.reasonForJobChange
   if (candidate.familyDetails) cmsCandidate.familyDetails = candidate.familyDetails
   if (candidate.goalAim !== undefined) cmsCandidate.goalAim = candidate.goalAim
+  if (candidate.candidateVisits !== undefined) cmsCandidate.candidateVisits = candidate.candidateVisits
   if (candidate.successInfo !== undefined) cmsCandidate.successInfo = candidate.successInfo
   if (candidate.documents !== undefined) cmsCandidate.documents = copyDocuments(candidate.documents)
 
@@ -143,6 +144,7 @@ const syncCandidateFromCms = async (cmsCandidateOrId) => {
   if (cmsCandidate.reasonForJobChange !== undefined) candidate.reasonForJobChange = cmsCandidate.reasonForJobChange
   if (cmsCandidate.familyDetails) candidate.familyDetails = cmsCandidate.familyDetails
   if (cmsCandidate.goalAim !== undefined) candidate.goalAim = cmsCandidate.goalAim
+  if (cmsCandidate.candidateVisits !== undefined) candidate.candidateVisits = cmsCandidate.candidateVisits
   if (cmsCandidate.successInfo !== undefined) candidate.successInfo = cmsCandidate.successInfo
   if (cmsCandidate.documents !== undefined) candidate.documents = copyDocuments(cmsCandidate.documents)
   candidate.selectionStatus = selectionFromCms(cmsCandidate.successRemarks)
