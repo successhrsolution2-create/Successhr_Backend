@@ -4,12 +4,7 @@ const Employee = require('../models/Employee')
 const { getEmsJwtSecret } = require('../middleware/emsAuth')
 
 const getEmsRefreshSecret = () => {
-  if (!process.env.EMS_REFRESH_SECRET) {
-    const error = new Error('EMS_REFRESH_SECRET is not configured')
-    error.status = 500
-    throw error
-  }
-  return process.env.EMS_REFRESH_SECRET
+  return process.env.EMS_REFRESH_SECRET || getEmsJwtSecret()
 }
 
 const signEmsToken = (employee) =>

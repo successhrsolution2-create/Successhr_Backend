@@ -1,6 +1,7 @@
 const defaultClientUrls = [
   'https://app.successhrsolutions.com',
   'https://apply.successhrsolutions.com',
+  'https://attendance.successhrsolutions.com',
   ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:5173'])
 ]
 

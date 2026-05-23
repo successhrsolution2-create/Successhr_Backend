@@ -35,12 +35,13 @@ const bearerToken = (req) => {
 const appSessionToken = (req) => parseCookies(req.headers.cookie)[APP_AUTH_COOKIE_NAME] || null
 
 const getEmsJwtSecret = () => {
-  if (!process.env.EMS_JWT_SECRET) {
-    const error = new Error('EMS_JWT_SECRET is not configured')
+  const secret = process.env.EMS_JWT_SECRET || process.env.JWT_SECRET
+  if (!secret) {
+    const error = new Error('EMS_JWT_SECRET or JWT_SECRET is not configured')
     error.status = 500
     throw error
   }
-  return process.env.EMS_JWT_SECRET
+  return secret
 }
 
 const sanitizeEmployeePrincipal = (employee) => ({
