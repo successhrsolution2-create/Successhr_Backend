@@ -26,7 +26,17 @@ const { checkCrmRole, verifyCrmToken } = require('./crm/middleware/crm.auth.midd
 const { redis } = require('./src/config/redis')
 
 const BLOCKED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
-const REQUIRED_ENV = ['MONGODB_URI', 'JWT_SECRET', 'CRM_JWT_SECRET']
+const VALID_NODE_ENV = new Set(['development', 'test', 'production'])
+const REQUIRED_ENV = ['NODE_ENV', 'MONGODB_URI', 'JWT_SECRET', 'CRM_JWT_SECRET', 'EMS_JWT_SECRET']
+const PRODUCTION_SECRET_ENV = [
+  'JWT_SECRET',
+  'CRM_JWT_SECRET',
+  'EMS_JWT_SECRET',
+  'EMS_REFRESH_SECRET',
+  'BACKUP_JWT_SECRET',
+  'BACKUP_DOWNLOAD_SECRET'
+]
+const PLACEHOLDER_SECRET_PATTERN = /(change_me|replace_with|placeholder|super_secret|secret_key|your_secret|example)/i
 
 const validateEnvironment = () => {
   const missing = REQUIRED_ENV.filter((key) => !process.env[key])
@@ -35,10 +45,18 @@ const validateEnvironment = () => {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`)
   }
 
+  if (!VALID_NODE_ENV.has(process.env.NODE_ENV)) {
+    throw new Error(`NODE_ENV must be one of: ${Array.from(VALID_NODE_ENV).join(', ')}`)
+  }
+
   if (process.env.NODE_ENV === 'production') {
-    const weakSecrets = ['JWT_SECRET', 'CRM_JWT_SECRET'].filter((key) => String(process.env[key] || '').length < 32)
+    const weakSecrets = PRODUCTION_SECRET_ENV.filter((key) => {
+      const value = String(process.env[key] || '')
+      return value.length < 32 || PLACEHOLDER_SECRET_PATTERN.test(value)
+    })
+
     if (weakSecrets.length) {
-      throw new Error(`Production secrets are too weak: ${weakSecrets.join(', ')}`)
+      throw new Error(`Production secrets are missing, weak, or placeholder values: ${weakSecrets.join(', ')}`)
     }
   }
 }

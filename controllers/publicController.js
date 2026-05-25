@@ -304,13 +304,6 @@ const findAdvisorByCode = async (code) =>
     isActive: true
   }).select('_id name advisorCode')
 
-const findAdvisorById = async (id) =>
-  User.findOne({
-    _id: id,
-    role: 'businessAdvisor',
-    isActive: true
-  }).select('_id name advisorCode')
-
 const findActiveSuperAdmin = async () =>
   User.findOne({
     role: 'superAdmin',
@@ -372,24 +365,6 @@ const uploadApplicationDocuments = async (filesByField = {}) => {
 
 const getAdvisorByCode = async (req, res) => {
   const code = String(req.params.code || '').trim().toLowerCase()
-
-  if (code === 'all') {
-    const advisors = await User.find({
-      role: 'businessAdvisor',
-      isActive: true
-    })
-      .sort({ name: 1 })
-      .select('_id name advisorCode')
-
-    return res.json(
-      advisors.map((advisor) => ({
-        advisorId: advisor._id,
-        advisorName: advisor.name,
-        advisorCode: advisor.advisorCode
-      }))
-    )
-  }
-
   const advisor = await findAdvisorByCode(code)
 
   if (!advisor) {
@@ -545,10 +520,9 @@ const submitApplication = async (req, res) => {
   const paramCode = String(req.params.code || '').trim().toLowerCase()
   const bodyCode = String(req.body?.advisorCode || '').trim().toLowerCase()
   const advisorCode = paramCode || bodyCode
-  const advisorId = String(req.body?.business_advisor_id || '').trim()
 
-  if (advisorCode || advisorId) {
-    const advisor = advisorId ? await findAdvisorById(advisorId) : await findAdvisorByCode(advisorCode)
+  if (advisorCode) {
+    const advisor = await findAdvisorByCode(advisorCode)
     if (advisor) {
       return submitToAdvisorFlow(req, res, payload, advisor, superAdmin)
     }

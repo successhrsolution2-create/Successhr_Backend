@@ -208,6 +208,39 @@ const asArray = (value) => {
   return [value]
 }
 
+const optionalEnums = {
+  gender: ['Male', 'Female', 'Other'],
+  marriageStatus: ['Married', 'Unmarried', 'Single', 'Widow'],
+  siblingGender: ['Male', 'Female', 'Other']
+}
+
+const normalizeOptionalEnum = (object, field, allowedValues) => {
+  if (!object || !Object.prototype.hasOwnProperty.call(object, field)) return
+  const value = object[field]
+  if (value === '' || value === undefined || value === null) {
+    object[field] = undefined
+    return
+  }
+  if (!allowedValues.includes(value)) {
+    object[field] = undefined
+  }
+}
+
+const normalizeOptionalCandidateEnums = (payload = {}) => {
+  normalizeOptionalEnum(payload, 'gender', optionalEnums.gender)
+  normalizeOptionalEnum(payload, 'marriageStatus', optionalEnums.marriageStatus)
+
+  const familyDetails = payload.familyDetails
+  if (!familyDetails || typeof familyDetails !== 'object') return
+
+  normalizeOptionalEnum(familyDetails, 'siblingGender', optionalEnums.siblingGender)
+  if (Array.isArray(familyDetails.siblings)) {
+    familyDetails.siblings.forEach((sibling) => {
+      normalizeOptionalEnum(sibling, 'siblingGender', optionalEnums.siblingGender)
+    })
+  }
+}
+
 const documentTypeFromField = (fieldName) => {
   const field = String(fieldName || '')
   return field.startsWith('documents.') ? field.slice('documents.'.length) : ''
@@ -346,6 +379,7 @@ const getCandidates = async (req, res) => {
 }
 
 const createCandidate = async (req, res) => {
+  normalizeOptionalCandidateEnums(req.body)
   normalizeCandidateIdentity(req.body)
   await ensureUniqueCandidateIdentity(req.body, null, { checkCms: false })
   const existingCmsCandidate = await findClaimableCmsCandidate(req.body, req.user._id)
@@ -412,6 +446,7 @@ const updateCandidate = async (req, res) => {
     })
   }
 
+  normalizeOptionalCandidateEnums(req.body)
   Object.entries(req.body).forEach(([key, value]) => {
     if (!blocked.includes(key)) {
       candidate[key] = value

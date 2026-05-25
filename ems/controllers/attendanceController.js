@@ -32,6 +32,16 @@ const requestedEmployee = async (req) => {
   return employeeByIdentifier(identifier)
 }
 
+const requestedSelfServiceEmployee = async (req) => {
+  if (req.emsUser?.source !== 'ems_employee' || req.emsUser?.role !== 'employee') {
+    const error = new Error('Only employees can use check-in and check-out')
+    error.status = 403
+    throw error
+  }
+
+  return employeeByIdentifier(req.emsUser.id)
+}
+
 const getActiveSchedule = (employeeId) =>
   WorkSchedule.findOne({ employee: employeeId, isActive: true })
     .populate('officeLocation', 'name address coordinates radius isActive')
@@ -73,7 +83,13 @@ const ensureAttendanceAccess = (req, employeeId) => {
 }
 
 const checkIn = async (req, res) => {
-  const employee = await requestedEmployee(req)
+  let employee
+  try {
+    employee = await requestedSelfServiceEmployee(req)
+  } catch (error) {
+    return res.status(error.status || 403).json({ message: error.message })
+  }
+
   if (!employee) {
     return res.status(404).json({ message: 'Employee not found' })
   }
@@ -146,7 +162,13 @@ const checkIn = async (req, res) => {
 }
 
 const checkOut = async (req, res) => {
-  const employee = await requestedEmployee(req)
+  let employee
+  try {
+    employee = await requestedSelfServiceEmployee(req)
+  } catch (error) {
+    return res.status(error.status || 403).json({ message: error.message })
+  }
+
   if (!employee) {
     return res.status(404).json({ message: 'Employee not found' })
   }
