@@ -143,12 +143,16 @@ app.use((_req, res, next) => {
   next()
 })
 
-app.use(
-  cors({
-    origin: corsOrigin,
-    credentials: true
-  })
-)
+const corsOptions = {
+  origin: corsOrigin,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'X-Requested-With', 'X-EMS-Refresh-Token'],
+  optionsSuccessStatus: 204
+}
+
+app.use(cors(corsOptions))
+app.options('*', cors(corsOptions))
 app.use(compression())
 app.use('/uploads', verifyToken, express.static(path.join(__dirname, 'uploads')))
 app.use(express.json({ limit: '2mb' }))
