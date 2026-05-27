@@ -27,8 +27,8 @@ router.post('/login', loginLimiter, login)
 router.post('/logout', logout)
 router.post('/director-assessment-unlock', verifyToken, requireRole('superAdmin', 'candidateAdmin'), loginLimiter, createDirectorAssessmentUnlock)
 router.get('/me', verifyToken, me)
-router.get('/settings', verifyToken, requireRole('superAdmin', 'businessAdvisor', 'candidateAdmin'), getSuperAdminSettings)
-router.put('/settings/profile', verifyToken, requireRole('superAdmin', 'businessAdvisor', 'candidateAdmin'), updateSuperAdminProfile)
-router.put('/settings/password', verifyToken, requireRole('superAdmin', 'businessAdvisor', 'candidateAdmin'), updateSuperAdminPassword)
+router.get('/settings', verifyToken, requireRole('superAdmin', 'businessAdvisor', 'candidateAdmin', 'manager'), getSuperAdminSettings)
+router.put('/settings/profile', verifyToken, requireRole('superAdmin', 'businessAdvisor', 'candidateAdmin', 'manager'), updateSuperAdminProfile)
+router.put('/settings/password', verifyToken, requireRole('superAdmin', 'businessAdvisor', 'candidateAdmin', 'manager'), updateSuperAdminPassword)
 
 module.exports = router

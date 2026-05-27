@@ -9,7 +9,7 @@ const CANDIDATE_CLASSES = ['1st', '2nd', '3rd']
 const CALL_LOG_STATUSES = ['answered', 'not_answered', 'busy', 'callback']
 const CALL_STATUSES = ['pending', 'called', 'followup', 'converted', 'rejected']
 const INTERESTED_STATUSES = ['yes', 'no']
-const REGISTRATION_INFO = ['RC', 'WRC']
+const REGISTRATION_INFO = ['RC', 'WRC', 'RC data', 'WRC data', 'College contacts']
 
 const addValidationError = (req, field, message) => {
   req.crmValidationErrors = req.crmValidationErrors || []
@@ -151,12 +151,12 @@ const validatePasswordConfirmation = (req, options = {}) => {
 
 const validateCrmLogin = (req, _res, next) => {
   const body = req.body || {}
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
+  const loginId = typeof body.email === 'string' ? body.email.trim() : ''
   const password = typeof body.password === 'string' ? body.password : ''
 
-  if (!email) {
-    addValidationError(req, 'email', 'Email is required')
-  } else if (!EMAIL_PATTERN.test(email)) {
+  if (!loginId) {
+    addValidationError(req, 'email', 'Email or employee ID is required')
+  } else if (loginId.includes('@') && !EMAIL_PATTERN.test(loginId.toLowerCase())) {
     addValidationError(req, 'email', 'Please provide a valid email')
   }
 
@@ -168,7 +168,8 @@ const validateCrmLogin = (req, _res, next) => {
     addValidationError(req, 'password', `Password cannot exceed ${PASSWORD_MAX_LENGTH} characters`)
   }
 
-  req.body.email = email
+  req.body.email = loginId.includes('@') ? loginId.toLowerCase() : loginId.toUpperCase()
+  req.body.loginId = req.body.email
   req.body.password = password
 
   return next()
@@ -264,10 +265,11 @@ const validateCrmCandidate = (req, _res, next) => {
   normalizeRequiredText(req, 'jobNo', 'Job number', { max: 80 })
   normalizeRequiredText(req, 'jobProfile', 'Job profile', { max: 180 })
   normalizeRequiredText(req, 'availabilityForInterview', 'Availability for interview', { max: 180 })
+  normalizeOptionalText(req, 'interviewDate', 'Interview date', { max: 30 })
   normalizeRequiredText(req, 'interviewTime', 'Interview time', { max: 120 })
   normalizeRequiredText(req, 'overallCallingRemark', 'Overall calling remark', { max: 3000 })
   normalizeRequiredEnum(req, 'candidateClass', 'Candidate class', CANDIDATE_CLASSES)
-  normalizeRequiredEnum(req, 'registrationInfo', 'Registration info', REGISTRATION_INFO)
+  normalizeRequiredEnum(req, 'registrationInfo', 'Source', REGISTRATION_INFO)
   normalizeRequiredEnum(req, 'callStatus', 'Call status', CALL_STATUSES)
 
   const interested = req.body?.interested && typeof req.body.interested === 'object' ? req.body.interested : {}
@@ -290,11 +292,11 @@ const validateCrmCandidate = (req, _res, next) => {
         : ''
 
   if (interestedStatus === 'no' && !reason) {
-    addValidationError(req, 'interested.reason', 'Interested reason is required when status is no')
+    addValidationError(req, 'interested.reason', 'Reason for not interested is required when status is no')
   }
 
   if (reason.length > 1000) {
-    addValidationError(req, 'interested.reason', 'Interested reason cannot exceed 1000 characters')
+    addValidationError(req, 'interested.reason', 'Reason for not interested cannot exceed 1000 characters')
   }
 
   if (interestedStatus) {

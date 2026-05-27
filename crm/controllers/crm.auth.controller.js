@@ -79,8 +79,14 @@ const signRefreshToken = (user) =>
 
 const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body
-    const user = await CrmUser.findOne({ email }).select('+password')
+    const { password } = req.body
+    const loginId = String(req.body?.loginId || req.body?.email || '').trim()
+    const user = await CrmUser.findOne({
+      $or: [
+        { email: loginId.toLowerCase() },
+        { employeeId: loginId.toUpperCase() }
+      ]
+    }).select('+password')
 
     if (!user) {
       await bcrypt.compare(password, DUMMY_CRM_PASSWORD_HASH)

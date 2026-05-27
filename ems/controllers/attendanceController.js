@@ -1,6 +1,7 @@
 const Attendance = require('../models/Attendance')
 const Employee = require('../models/Employee')
 const WorkSchedule = require('../models/WorkSchedule')
+const { ATTENDANCE_LOGIN_ROLES } = require('../config/emsConstants')
 const { canAccessEmployee } = require('../middleware/emsRBAC')
 const { assertInsideGeofence } = require('../middleware/emsGeoCheck')
 const {
@@ -23,18 +24,9 @@ const employeeByIdentifier = async (identifier) => {
   return Employee.findOne(query)
 }
 
-const requestedEmployee = async (req) => {
-  if (req.emsUser?.source === 'ems_employee' && req.emsUser?.role === 'employee') {
-    return employeeByIdentifier(req.emsUser.id)
-  }
-
-  const identifier = req.body?.employeeId || req.body?.employee || req.params?.employeeId || req.params?.id || req.emsUser?.id
-  return employeeByIdentifier(identifier)
-}
-
 const requestedSelfServiceEmployee = async (req) => {
-  if (req.emsUser?.source !== 'ems_employee' || req.emsUser?.role !== 'employee') {
-    const error = new Error('Only employees can use check-in and check-out')
+  if (req.emsUser?.source !== 'ems_employee' || !ATTENDANCE_LOGIN_ROLES.includes(req.emsUser?.role)) {
+    const error = new Error('Only attendance-enabled role accounts can use check-in and check-out')
     error.status = 403
     throw error
   }
@@ -148,7 +140,7 @@ const checkIn = async (req, res) => {
         notes: safeText(req.body?.notes)
       }
     },
-    { new: true, upsert: true, runValidators: true }
+    { returnDocument: 'after', upsert: true, runValidators: true }
   )
     .populate('employee', 'employeeId firstName lastName email department')
     .populate('officeLocation', 'name address coordinates radius')

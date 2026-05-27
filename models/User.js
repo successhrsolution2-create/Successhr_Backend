@@ -1,5 +1,7 @@
 const mongoose = require('mongoose')
 
+const MANAGER_ACCESS_MODULES = ['candidateManagement', 'crmManagement', 'employeeManagement']
+
 const userSchema = new mongoose.Schema(
   {
     name: {
@@ -17,6 +19,13 @@ const userSchema = new mongoose.Schema(
       maxlength: 180,
       match: /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     },
+    employeeId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+      uppercase: true
+    },
     password: {
       type: String,
       required: true,
@@ -24,8 +33,13 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['superAdmin', 'businessAdvisor', 'candidateAdmin'],
+      enum: ['superAdmin', 'businessAdvisor', 'candidateAdmin', 'manager'],
       required: true
+    },
+    managerAccess: {
+      type: [String],
+      enum: MANAGER_ACCESS_MODULES,
+      default: []
     },
     advisorCode: {
       type: String,
@@ -57,3 +71,4 @@ userSchema.set('toJSON', {
 })
 
 module.exports = mongoose.model('User', userSchema)
+module.exports.MANAGER_ACCESS_MODULES = MANAGER_ACCESS_MODULES

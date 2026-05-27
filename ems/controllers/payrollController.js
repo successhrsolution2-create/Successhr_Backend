@@ -55,7 +55,7 @@ const generatePayroll = async (req, res) => {
         ...calculated,
         generatedBy: req.emsUser?.id || null
       },
-      { upsert: true, new: true, runValidators: true }
+      { upsert: true, returnDocument: 'after', runValidators: true }
     )
     results.push(payroll)
   }
@@ -107,7 +107,7 @@ const releasePayroll = async (req, res) => {
       releasedAt: new Date(),
       releasedBy: req.emsUser?.id || null
     },
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   ).populate('employee', 'employeeId firstName lastName email')
 
   if (!payroll) {

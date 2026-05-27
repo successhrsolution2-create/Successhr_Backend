@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken')
 
 const Employee = require('../models/Employee')
 const User = require('../../models/User')
+const { hasManagerAccess } = require('../../middleware/roleMiddleware')
 
 const APP_AUTH_COOKIE_NAME = 'success_hr_session'
 const SESSION_MARKER = 'cookie'
@@ -73,14 +74,16 @@ const authenticateEmsToken = async (token) => {
   return sanitizeEmployeePrincipal(employee)
 }
 
-const authenticateAppSuperAdminToken = async (token) => {
+const authenticateAppUserToken = async (token) => {
   if (!process.env.JWT_SECRET) return null
 
   const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })
-  const user = await User.findById(decoded.id).select('_id name email role isActive tokenVersion')
+  const user = await User.findById(decoded.id).select('_id name email role managerAccess isActive tokenVersion')
 
-  if (!user || !user.isActive || user.role !== 'superAdmin') return null
+  if (!user || !user.isActive) return null
   if (Number(decoded.tokenVersion ?? -1) !== Number(user.tokenVersion || 0)) return null
+
+  if (user.role !== 'superAdmin' && !hasManagerAccess(user, 'employeeManagement')) return null
 
   return {
     id: String(user._id),
@@ -89,7 +92,7 @@ const authenticateAppSuperAdminToken = async (token) => {
     name: user.name,
     email: user.email,
     role: 'ems_super_admin',
-    source: 'app_super_admin'
+    source: user.role === 'superAdmin' ? 'app_super_admin' : 'app_manager'
   }
 }
 
@@ -103,7 +106,7 @@ const emsAuth = async (req, res, next) => {
         req.emsUser = await authenticateEmsToken(token)
         return next()
       } catch (error) {
-        const appPrincipal = await authenticateAppSuperAdminToken(token).catch(() => null)
+        const appPrincipal = await authenticateAppUserToken(token).catch(() => null)
         if (appPrincipal) {
           req.emsUser = appPrincipal
           return next()
@@ -113,7 +116,7 @@ const emsAuth = async (req, res, next) => {
     }
 
     if (cookieToken) {
-      const appPrincipal = await authenticateAppSuperAdminToken(cookieToken)
+      const appPrincipal = await authenticateAppUserToken(cookieToken)
       if (appPrincipal) {
         req.emsUser = appPrincipal
         return next()
@@ -131,9 +134,9 @@ const optionalEmsAuth = async (req, _res, next) => {
     const token = bearerToken(req)
     const cookieToken = appSessionToken(req)
     if (token) {
-      req.emsUser = await authenticateEmsToken(token).catch(() => authenticateAppSuperAdminToken(token))
+      req.emsUser = await authenticateEmsToken(token).catch(() => authenticateAppUserToken(token))
     } else if (cookieToken) {
-      req.emsUser = await authenticateAppSuperAdminToken(cookieToken)
+      req.emsUser = await authenticateAppUserToken(cookieToken)
     }
   } catch (_error) {
     req.emsUser = null

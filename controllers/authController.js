@@ -102,17 +102,19 @@ const login = async (req, res) => {
     return res.status(400).json({ message: `Password cannot exceed ${PASSWORD_MAX_LENGTH} characters` })
   }
 
-  const normalizedEmail = normalizeEmail(email)
-  const lockMessage = accountLockMessage(normalizedEmail)
+  const loginId = trimmedText(email)
+  const isEmailLogin = loginId.includes('@')
+  const loginKey = isEmailLogin ? normalizeEmail(loginId) : loginId.toUpperCase()
+  const lockMessage = accountLockMessage(loginKey)
   if (lockMessage) {
     return res.status(429).json({ message: lockMessage })
   }
 
-  const user = await User.findOne({ email: normalizedEmail }).select('+password')
+  const user = await User.findOne(isEmailLogin ? { email: normalizeEmail(loginId) } : { employeeId: loginKey }).select('+password')
 
   if (!user || !user.isActive) {
     await bcrypt.compare(password, DUMMY_PASSWORD_HASH)
-    const locked = recordFailedLogin(normalizedEmail)
+    const locked = recordFailedLogin(loginKey)
     if (locked) {
       return res.status(429).json({ message: LOGIN_ACCOUNT_LOCK_MESSAGE })
     }
@@ -122,14 +124,14 @@ const login = async (req, res) => {
   const matches = await bcrypt.compare(password, user.password)
 
   if (!matches) {
-    const locked = recordFailedLogin(normalizedEmail)
+    const locked = recordFailedLogin(loginKey)
     if (locked) {
       return res.status(429).json({ message: LOGIN_ACCOUNT_LOCK_MESSAGE })
     }
     return res.status(401).json({ message: 'Invalid email or password' })
   }
 
-  clearFailedLogins(normalizedEmail)
+  clearFailedLogins(loginKey)
   res.cookie(AUTH_COOKIE_NAME, signToken(user), authCookieOptions())
   res.json({
     token: SESSION_MARKER,

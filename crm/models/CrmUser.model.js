@@ -23,6 +23,11 @@ const crmUserSchema = new Schema(
       maxlength: [180, 'Email cannot exceed 180 characters'],
       match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Please provide a valid email']
     },
+    employeeId: {
+      type: String,
+      trim: true,
+      uppercase: true
+    },
     password: {
       type: String,
       required: [true, 'Password is required'],
@@ -57,6 +62,7 @@ const crmUserSchema = new Schema(
 )
 
 crmUserSchema.index({ email: 1 }, { unique: true })
+crmUserSchema.index({ employeeId: 1 }, { unique: true, sparse: true })
 crmUserSchema.index({ role: 1, isActive: 1 })
 crmUserSchema.index({ createdBy: 1 })
 

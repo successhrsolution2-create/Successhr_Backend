@@ -45,7 +45,7 @@ const updateLocation = async (req, res) => {
   const payload = normalizeLocationPayload(req.body)
   payload.updatedBy = req.emsUser?.id || null
   const location = await OfficeLocation.findByIdAndUpdate(req.params.id, payload, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true
   })
 

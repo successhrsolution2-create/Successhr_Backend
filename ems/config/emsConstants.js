@@ -1,9 +1,12 @@
-const EMS_ROLES = ['ems_super_admin', 'admin', 'hr', 'manager', 'employee']
+const EMS_ROLES = ['ems_super_admin', 'admin', 'hr', 'manager', 'employee', 'crm_employee', 'candidate_admin']
+const EMPLOYEE_MANAGEMENT_LOGIN_ROLES = ['candidate_admin', 'manager', 'crm_employee']
+const ATTENDANCE_LOGIN_ROLES = ['ems_super_admin', 'admin', 'hr', ...EMPLOYEE_MANAGEMENT_LOGIN_ROLES]
 
 const EMS_ROLE_GROUPS = {
   admin: ['ems_super_admin', 'admin'],
   hr: ['ems_super_admin', 'admin', 'hr'],
   manager: ['ems_super_admin', 'admin', 'hr', 'manager'],
+  attendance: ATTENDANCE_LOGIN_ROLES,
   employee: EMS_ROLES
 }
 
@@ -27,6 +30,8 @@ const DEFAULT_LEAVE_ALLOCATIONS = {
 module.exports = {
   EMS_ROLES,
   EMS_ROLE_GROUPS,
+  ATTENDANCE_LOGIN_ROLES,
+  EMPLOYEE_MANAGEMENT_LOGIN_ROLES,
   EMPLOYMENT_TYPES,
   EMPLOYEE_STATUSES,
   ATTENDANCE_STATUSES,

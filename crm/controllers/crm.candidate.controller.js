@@ -55,6 +55,17 @@ const sendError = (res, error, fallbackMessage = 'CRM candidate request failed')
 
 const normalizeText = (value) => (value === null || value === undefined ? '' : String(value).trim())
 
+const normalizeRegistrationInfo = (value) => {
+  const text = normalizeText(value)
+  const normalized = text.toLowerCase().replace(/\s+/g, ' ')
+
+  if (normalized === 'rc' || normalized === 'rc data') return 'RC data'
+  if (normalized === 'wrc' || normalized === 'wrc data') return 'WRC data'
+  if (normalized === 'college contacts' || normalized === 'college contact' || normalized === 'coleege contacts') return 'College contacts'
+
+  return text
+}
+
 const addLimitedRowReport = (reports, rowReport) => {
   if (reports.length < BULK_IMPORT_ROW_REPORT_LIMIT) {
     reports.push(rowReport)
@@ -106,9 +117,9 @@ const normalizeBulkInterested = (source, errors) => {
 
   if (status === 'no') {
     if (!reason) {
-      errors.push('Interested reason is required when status is no')
+      errors.push('Reason for not interested is required when status is no')
     } else if (reason.length > 1000) {
-      errors.push('Interested reason cannot exceed 1000 characters')
+      errors.push('Reason for not interested cannot exceed 1000 characters')
     }
 
     return { status, reason }
@@ -127,6 +138,14 @@ const normalizeBulkCandidateRow = (row) => {
     validateBulkTextField(source || {}, payload, errors, field, label, min, max)
   })
 
+  const interviewDate = normalizeText(source?.interviewDate)
+  if (interviewDate) {
+    if (interviewDate.length > 30) {
+      errors.push('Interview date cannot exceed 30 characters')
+    }
+    payload.interviewDate = interviewDate
+  }
+
   const mobileNumber = normalizeText(source?.mobileNumber).replace(/\D/g, '')
   if (!mobileNumber) {
     errors.push('Mobile number is required')
@@ -136,9 +155,7 @@ const normalizeBulkCandidateRow = (row) => {
   payload.mobileNumber = mobileNumber
 
   validateBulkEnumField(source || {}, payload, errors, 'candidateClass', 'Candidate class', CANDIDATE_CLASSES)
-  validateBulkEnumField(source || {}, payload, errors, 'registrationInfo', 'Registration info', REGISTRATION_INFO, (value) =>
-    normalizeText(value).toUpperCase()
-  )
+  validateBulkEnumField(source || {}, payload, errors, 'registrationInfo', 'Source', REGISTRATION_INFO, normalizeRegistrationInfo)
   validateBulkEnumField(source || {}, payload, errors, 'callStatus', 'Call status', CALL_STATUSES, (value) =>
     normalizeText(value).toLowerCase()
   )
@@ -302,6 +319,7 @@ const getCandidatePayload = (body, recruiterId) => ({
   jobProfile: body.jobProfile,
   interested: body.interested,
   availabilityForInterview: body.availabilityForInterview,
+  ...(body.interviewDate ? { interviewDate: body.interviewDate } : {}),
   interviewTime: body.interviewTime,
   recruiterId,
   overallCallingRemark: body.overallCallingRemark,

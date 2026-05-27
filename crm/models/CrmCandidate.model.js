@@ -4,7 +4,7 @@ const { Schema } = mongoose
 
 const INTERESTED_STATUSES = ['yes', 'no']
 const CANDIDATE_CLASSES = ['1st', '2nd', '3rd']
-const REGISTRATION_INFO = ['RC', 'WRC']
+const REGISTRATION_INFO = ['RC', 'WRC', 'RC data', 'WRC data', 'College contacts']
 const CALL_STATUSES = ['pending', 'called', 'followup', 'converted', 'rejected']
 
 const interestedSchema = new Schema(
@@ -20,7 +20,7 @@ const interestedSchema = new Schema(
     reason: {
       type: String,
       trim: true,
-      maxlength: [1000, 'Interested reason cannot exceed 1000 characters'],
+      maxlength: [1000, 'Reason for not interested cannot exceed 1000 characters'],
       required() {
         return this.status === 'no'
       }
@@ -76,6 +76,11 @@ const crmCandidateSchema = new Schema(
       trim: true,
       maxlength: [180, 'Availability cannot exceed 180 characters']
     },
+    interviewDate: {
+      type: String,
+      trim: true,
+      maxlength: [30, 'Interview date cannot exceed 30 characters']
+    },
     interviewTime: {
       type: String,
       required: [true, 'Interview time is required'],
@@ -105,9 +110,9 @@ const crmCandidateSchema = new Schema(
       type: String,
       enum: {
         values: REGISTRATION_INFO,
-        message: 'Registration info must be RC or WRC'
+        message: 'Source must be RC data, WRC data, or College contacts'
       },
-      required: [true, 'Registration info is required']
+      required: [true, 'Source is required']
     },
     callStatus: {
       type: String,

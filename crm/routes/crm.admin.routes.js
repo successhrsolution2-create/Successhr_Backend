@@ -29,6 +29,13 @@ router.put(
   crmAdminController.updateEmployee
 )
 
+router.delete(
+  '/employees/:id',
+  validateCrmMongoId('id'),
+  validateInput,
+  crmAdminController.deleteEmployee
+)
+
 router.patch(
   '/employees/:id/toggle',
   sanitizeCrmBody,

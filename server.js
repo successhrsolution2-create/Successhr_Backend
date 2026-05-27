@@ -20,7 +20,7 @@ const placementRoutes = require('./routes/placementRoutes')
 const cmsRoutes = require('./routes/cms/cmsRoutes')
 const publicRoutes = require('./routes/publicRoutes')
 const { verifyToken } = require('./middleware/authMiddleware')
-const { requireRole } = require('./middleware/roleMiddleware')
+const { requireRole, requireRoleOrManagerAccess } = require('./middleware/roleMiddleware')
 const { cleanupTempUploads } = require('./middleware/uploadMiddleware')
 const { checkCrmRole, verifyCrmToken } = require('./crm/middleware/crm.auth.middleware')
 const { redis } = require('./src/config/redis')
@@ -108,7 +108,7 @@ const requireCrmAdminAccess = (req, res, next) => {
     return verifyCrmToken(req, res, () => checkCrmRole(['crm_super_admin'])(req, res, next))
   }
 
-  return verifyToken(req, res, () => requireRole('superAdmin')(req, res, next))
+  return verifyToken(req, res, () => requireRoleOrManagerAccess('crmManagement', 'superAdmin')(req, res, next))
 }
 
 app.disable('x-powered-by')
@@ -193,7 +193,7 @@ app.use('/api/students', studentRoutes)
 app.use('/api/companies', companyRoutes)
 app.use('/api/placements', placementRoutes)
 app.use('/api/super-admin', require('./routes/superAdminRoutes'))
-app.use('/api/cms', verifyToken, requireRole('superAdmin', 'candidateAdmin'), cmsRoutes)
+app.use('/api/cms', verifyToken, requireRoleOrManagerAccess('candidateManagement', 'superAdmin', 'candidateAdmin'), cmsRoutes)
 app.use('/api/ems', require('./ems/routes/index'))
 app.use('/crm/admin', requireCrmAdminAccess, require('./crm/routes/crm.admin.routes'))
 app.use('/crm', require('./crm/crm.routes'))

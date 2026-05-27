@@ -56,7 +56,7 @@ const updateDepartment = async (req, res) => {
   payload.updatedBy = req.emsUser?.id || null
 
   const department = await Department.findByIdAndUpdate(req.params.id, payload, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true
   }).populate('manager', 'employeeId firstName lastName email')
 

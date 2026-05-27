@@ -348,6 +348,26 @@ const toggleEmployee = async (req, res) => {
   }
 }
 
+const deleteEmployee = async (req, res) => {
+  try {
+    const employee = await CrmUser.findOne({ _id: req.params.id, role: 'crm_employee' })
+
+    if (!employee) {
+      throw createHttpError(404, 'CRM employee not found')
+    }
+
+    await CrmUser.deleteOne({ _id: employee._id })
+
+    return res.status(200).json({
+      success: true,
+      message: 'CRM employee deleted successfully',
+      data: { employeeId: employee._id.toString() }
+    })
+  } catch (error) {
+    return sendError(res, error, 'Failed to delete CRM employee')
+  }
+}
+
 const listCandidates = async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req.query)
@@ -552,14 +572,15 @@ const exportCandidates = async (req, res) => {
         'Job No',
         'Job Profile',
         'Interested',
-        'Interested Reason',
+        'Reason For Not Interested',
         'Availability For Interview',
+        'Interview Date',
         'Interview Time',
         'Recruiter Name',
         'Recruiter Email',
         'Overall Calling Remark',
         'Candidate Class',
-        'Registration Info',
+        'Source',
         'Call Status',
         'Active',
         'Created At',
@@ -585,6 +606,7 @@ const exportCandidates = async (req, res) => {
           candidate.interested?.status,
           candidate.interested?.reason,
           candidate.availabilityForInterview,
+          candidate.interviewDate,
           candidate.interviewTime,
           candidate.recruiterId?.name,
           candidate.recruiterId?.email,
@@ -611,6 +633,7 @@ const exportCandidates = async (req, res) => {
 
 module.exports = {
   createEmployee,
+  deleteEmployee,
   exportCandidates,
   getReports,
   listCandidates,

@@ -1,3 +1,4 @@
+const bcrypt = require('bcryptjs')
 const ExcelJS = require('exceljs')
 
 const Department = require('../models/Department')
@@ -6,7 +7,11 @@ const Employee = require('../models/Employee')
 const Attendance = require('../models/Attendance')
 const Leave = require('../models/Leave')
 const Payroll = require('../models/Payroll')
+const CrmUser = require('../../crm/models/CrmUser.model')
+const User = require('../../models/User')
+const { MANAGER_ACCESS_MODULES } = require('../../models/User')
 const { canAccessEmployee } = require('../middleware/emsRBAC')
+const { EMS_ROLES } = require('../config/emsConstants')
 const { normalizeEmployeePayload } = require('../validations/employeeValidation')
 const {
   buildSearch,
@@ -22,6 +27,279 @@ const employeePopulate = [
   { path: 'manager', select: 'employeeId firstName lastName email' }
 ]
 
+const APP_LOGIN_ROLES = ['candidate_admin', 'manager']
+
+const appRoleForEmployeeRole = (role) => {
+  if (role === 'candidate_admin') return 'candidateAdmin'
+  if (role === 'manager') return 'manager'
+  return null
+}
+
+const employeeRoleForAppRole = (role) => {
+  if (role === 'candidateAdmin') return 'candidate_admin'
+  if (role === 'manager') return 'manager'
+  return null
+}
+
+const employeeFullName = (employee = {}) =>
+  employee.fullName ||
+  `${employee.firstName || ''} ${employee.lastName || ''}`.trim() ||
+  employee.email ||
+  'CRM Employee'
+
+const splitName = (name = '') => {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
+  return {
+    firstName: parts.shift() || 'Login',
+    lastName: parts.join(' ') || 'User'
+  }
+}
+
+const createHttpError = (status, message) => {
+  const error = new Error(message)
+  error.status = status
+  error.statusCode = status
+  return error
+}
+
+const syncCrmEmployeeLogin = async (employee, rawPassword) => {
+  if (!employee || employee.role !== 'crm_employee') return
+
+  const existingByEmail = await CrmUser.findOne({ email: employee.email }).select('+password')
+  if (existingByEmail && existingByEmail.role !== 'crm_employee') {
+    throw createHttpError(409, 'This email is already used by a CRM admin account')
+  }
+
+  let crmUser = employee.crmUserId
+    ? await CrmUser.findById(employee.crmUserId).select('+password')
+    : null
+
+  if (existingByEmail && crmUser && String(existingByEmail._id) !== String(crmUser._id)) {
+    throw createHttpError(409, 'This email is already used by another CRM employee login')
+  }
+
+  if (!crmUser) crmUser = existingByEmail
+
+  if (!crmUser) {
+    if (!rawPassword) {
+      throw createHttpError(400, 'Temporary password is required for CRM Employee login')
+    }
+
+    crmUser = new CrmUser({
+      name: employeeFullName(employee),
+      email: employee.email,
+      employeeId: employee.employeeId,
+      password: rawPassword,
+      role: 'crm_employee',
+      isActive: employee.status === 'active',
+      createdBy: employee.createdBy || employee.updatedBy || null
+    })
+  } else {
+    crmUser.name = employeeFullName(employee)
+    crmUser.email = employee.email
+    crmUser.employeeId = employee.employeeId
+    crmUser.role = 'crm_employee'
+    crmUser.isActive = employee.status === 'active'
+
+    if (rawPassword) {
+      crmUser.password = rawPassword
+      crmUser.tokenVersion = Number(crmUser.tokenVersion || 0) + 1
+    }
+  }
+
+  await crmUser.save()
+
+  if (!employee.crmUserId || String(employee.crmUserId) !== String(crmUser._id)) {
+    employee.crmUserId = crmUser._id
+    await Employee.updateOne({ _id: employee._id }, { $set: { crmUserId: crmUser._id } })
+  }
+}
+
+const deactivateCrmEmployeeLogin = async (employee) => {
+  if (!employee?.crmUserId) return
+
+  await CrmUser.findByIdAndUpdate(employee.crmUserId, {
+    $set: { isActive: false },
+    $inc: { tokenVersion: 1 }
+  })
+}
+
+const syncAppUserLogin = async (employee, rawPassword) => {
+  const appRole = appRoleForEmployeeRole(employee?.role)
+  if (!employee || !appRole) return
+
+  const existingByEmail = await User.findOne({ email: employee.email }).select('+password')
+  const linkedToSameUser = employee.appUserId && existingByEmail && String(existingByEmail._id) === String(employee.appUserId)
+  if (existingByEmail && existingByEmail.role !== appRole && !linkedToSameUser) {
+    throw createHttpError(409, 'This email is already used by another login role')
+  }
+
+  let appUser = employee.appUserId
+    ? await User.findById(employee.appUserId).select('+password')
+    : null
+
+  if (existingByEmail && appUser && String(existingByEmail._id) !== String(appUser._id)) {
+    throw createHttpError(409, 'This email is already used by another login account')
+  }
+
+  if (!appUser) appUser = existingByEmail
+
+  if (!appUser) {
+    if (!rawPassword) {
+      throw createHttpError(400, 'Temporary password is required for this login role')
+    }
+
+    appUser = new User({
+      name: employeeFullName(employee),
+      email: employee.email,
+      employeeId: employee.employeeId,
+      password: await bcrypt.hash(rawPassword, 10),
+      role: appRole,
+      isActive: employee.status === 'active',
+      managerAccess: appRole === 'manager' ? MANAGER_ACCESS_MODULES : []
+    })
+  } else {
+    appUser.name = employeeFullName(employee)
+    appUser.email = employee.email
+    appUser.employeeId = employee.employeeId
+    appUser.role = appRole
+    appUser.isActive = employee.status === 'active'
+    appUser.managerAccess = appRole === 'manager' ? MANAGER_ACCESS_MODULES : []
+    if (rawPassword) {
+      appUser.password = await bcrypt.hash(rawPassword, 10)
+      appUser.tokenVersion = Number(appUser.tokenVersion || 0) + 1
+    }
+  }
+
+  await appUser.save()
+
+  if (!employee.appUserId || String(employee.appUserId) !== String(appUser._id)) {
+    employee.appUserId = appUser._id
+    await Employee.updateOne({ _id: employee._id }, { $set: { appUserId: appUser._id } })
+  }
+}
+
+const deactivateAppUserLogin = async (employee) => {
+  if (!employee?.appUserId) return
+
+  await User.findByIdAndUpdate(employee.appUserId, {
+    $set: { isActive: false },
+    $inc: { tokenVersion: 1 }
+  })
+}
+
+const mirrorLegacyCrmEmployees = async () => {
+  const crmUsers = await CrmUser.find({ role: 'crm_employee' }).select('+password').lean()
+
+  for (const crmUser of crmUsers) {
+    let employee = await Employee.findOne({
+      $or: [
+        { crmUserId: crmUser._id },
+        { email: crmUser.email }
+      ],
+      isDeleted: false
+    })
+
+    if (employee && employee.role === 'crm_employee') {
+      const updates = {}
+      if (!employee.crmUserId) updates.crmUserId = crmUser._id
+      if (crmUser.employeeId !== employee.employeeId) {
+        await CrmUser.updateOne({ _id: crmUser._id }, { $set: { employeeId: employee.employeeId } })
+      }
+      if (Object.keys(updates).length) {
+        await Employee.updateOne({ _id: employee._id }, { $set: updates })
+      }
+      continue
+    }
+
+    if (employee) continue
+
+    const requestedEmployeeId = crmUser.employeeId || (await getNextEmployeeId())
+    const employeeIdTaken = await Employee.exists({ employeeId: requestedEmployeeId })
+    const employeeId = employeeIdTaken ? await getNextEmployeeId() : requestedEmployeeId
+    const { firstName, lastName } = splitName(crmUser.name)
+
+    employee = await Employee.create({
+      employeeId,
+      firstName,
+      lastName,
+      email: crmUser.email,
+      role: 'crm_employee',
+      status: crmUser.isActive ? 'active' : 'inactive',
+      designation: 'CRM Employee',
+      employmentType: 'Full-time',
+      crmUserId: crmUser._id,
+      createdBy: crmUser.createdBy || null
+    })
+
+    if (crmUser.password) {
+      await Employee.updateOne({ _id: employee._id }, { $set: { password: crmUser.password } })
+    }
+
+    if (crmUser.employeeId !== employeeId) {
+      await CrmUser.updateOne({ _id: crmUser._id }, { $set: { employeeId } })
+    }
+  }
+}
+
+const mirrorLegacyAppRoleUsers = async () => {
+  const users = await User.find({ role: { $in: ['candidateAdmin', 'manager'] } }).lean()
+
+  for (const user of users) {
+    const employeeRole = employeeRoleForAppRole(user.role)
+    if (!employeeRole) continue
+
+    let employee = await Employee.findOne({
+      $or: [
+        { appUserId: user._id },
+        { email: user.email }
+      ],
+      isDeleted: false
+    })
+
+    if (employee && APP_LOGIN_ROLES.includes(employee.role)) {
+      const updates = {}
+      if (!employee.appUserId) updates.appUserId = user._id
+      if (employee.role !== employeeRole) updates.role = employeeRole
+      if (employee.status !== (user.isActive === false ? 'inactive' : 'active')) {
+        updates.status = user.isActive === false ? 'inactive' : 'active'
+      }
+      if (Object.keys(updates).length) {
+        await Employee.updateOne({ _id: employee._id }, { $set: updates })
+      }
+      if (user.employeeId !== employee.employeeId) {
+        await User.updateOne({ _id: user._id }, { $set: { employeeId: employee.employeeId } })
+      }
+      continue
+    }
+
+    if (employee) continue
+
+    const { firstName, lastName } = splitName(user.name)
+    const employeeId = await getNextEmployeeId()
+    const mirroredEmployee = await Employee.create({
+      employeeId,
+      firstName,
+      lastName,
+      email: user.email,
+      role: employeeRole,
+      status: user.isActive === false ? 'inactive' : 'active',
+      designation: employeeRole === 'candidate_admin' ? 'Candidate Management' : 'Manager',
+      employmentType: 'Full-time',
+      appUserId: user._id
+    })
+
+    if (user.employeeId !== mirroredEmployee.employeeId) {
+      await User.updateOne({ _id: user._id }, { $set: { employeeId: mirroredEmployee.employeeId } })
+    }
+  }
+}
+
+const parseRoleList = (value) => String(value || '')
+  .split(',')
+  .map((role) => role.trim())
+  .filter((role) => EMS_ROLES.includes(role))
+
 const employeeFilter = (query = {}) => {
   const filter = {
     isDeleted: false,
@@ -30,11 +308,19 @@ const employeeFilter = (query = {}) => {
   if (query.department) filter.department = query.department
   if (query.status) filter.status = query.status
   if (query.type) filter.employmentType = query.type
-  if (query.role) filter.role = query.role
+  if (query.role) {
+    filter.role = query.role
+  } else {
+    const roles = parseRoleList(query.roles)
+    if (roles.length) filter.role = { $in: roles }
+  }
   return filter
 }
 
 const listEmployees = async (req, res) => {
+  await mirrorLegacyCrmEmployees()
+  await mirrorLegacyAppRoleUsers()
+
   const { page, limit, skip } = pagination(req.query)
   const filter = employeeFilter(req.query)
   const sortField = ['employeeId', 'firstName', 'joiningDate', 'status', 'createdAt'].includes(req.query.sortBy)
@@ -63,10 +349,25 @@ const createEmployee = async (req, res) => {
     return res.status(400).json({ message: errors.join(', ') })
   }
 
+  if (payload.role === 'crm_employee' && !payload.password) {
+    return res.status(400).json({ message: 'Temporary password is required for CRM Employee login' })
+  }
+  if (payload.role === 'crm_employee' && payload.password.length < 8) {
+    return res.status(400).json({ message: 'CRM Employee password must be at least 8 characters' })
+  }
+  if (APP_LOGIN_ROLES.includes(payload.role) && !payload.password) {
+    return res.status(400).json({ message: 'Temporary password is required for this login role' })
+  }
+  if (APP_LOGIN_ROLES.includes(payload.role) && payload.password.length < 6) {
+    return res.status(400).json({ message: 'Login role password must be at least 6 characters' })
+  }
+
   payload.employeeId = payload.employeeId || (await getNextEmployeeId())
   payload.createdBy = req.emsUser?.id || null
 
   const employee = await Employee.create(payload)
+  await syncCrmEmployeeLogin(employee, payload.password)
+  await syncAppUserLogin(employee, payload.password)
   const populated = await Employee.findById(employee._id).populate(employeePopulate)
   res.status(201).json({ message: 'Employee created', employee: populated })
 }
@@ -111,10 +412,43 @@ const updateEmployee = async (req, res) => {
     return res.status(404).json({ message: 'Employee not found' })
   }
 
+  const wasCrmEmployee = employee.role === 'crm_employee'
+  const wasAppLoginRole = APP_LOGIN_ROLES.includes(employee.role)
+  const rawPassword = payload.password
+  const nextRole = payload.role || employee.role
+
+  if (nextRole === 'crm_employee' && rawPassword && rawPassword.length < 8) {
+    return res.status(400).json({ message: 'CRM Employee password must be at least 8 characters' })
+  }
+  if (nextRole === 'crm_employee' && !rawPassword && !wasCrmEmployee && !employee.crmUserId) {
+    return res.status(400).json({ message: 'Temporary password is required when changing an employee to CRM Employee' })
+  }
+  if (APP_LOGIN_ROLES.includes(nextRole) && rawPassword && rawPassword.length < 6) {
+    return res.status(400).json({ message: 'Login role password must be at least 6 characters' })
+  }
+  if (APP_LOGIN_ROLES.includes(nextRole) && !rawPassword && !wasAppLoginRole && !employee.appUserId) {
+    const appRole = appRoleForEmployeeRole(nextRole)
+    const existingAppUser = await User.exists({ email: payload.email || employee.email, role: appRole })
+    if (!existingAppUser) {
+      return res.status(400).json({ message: 'Temporary password is required when changing to this login role' })
+    }
+  }
+
   Object.entries(payload).forEach(([key, value]) => {
     employee[key] = value
   })
   await employee.save()
+
+  if (employee.role === 'crm_employee') {
+    await syncCrmEmployeeLogin(employee, rawPassword)
+  } else if (wasCrmEmployee) {
+    await deactivateCrmEmployeeLogin(employee)
+  }
+  if (APP_LOGIN_ROLES.includes(employee.role)) {
+    await syncAppUserLogin(employee, rawPassword)
+  } else if (wasAppLoginRole) {
+    await deactivateAppUserLogin(employee)
+  }
 
   const populated = await Employee.findById(employee._id).populate(employeePopulate)
   res.json({ message: 'Employee updated', employee: populated })
@@ -130,13 +464,15 @@ const deleteEmployee = async (req, res) => {
       updatedBy: req.emsUser?.id || null,
       $inc: { tokenVersion: 1 }
     },
-    { new: true }
+    { returnDocument: 'after' }
   )
 
   if (!employee) {
     return res.status(404).json({ message: 'Employee not found' })
   }
 
+  await deactivateCrmEmployeeLogin(employee)
+  await deactivateAppUserLogin(employee)
   res.json({ message: 'Employee deleted' })
 }
 

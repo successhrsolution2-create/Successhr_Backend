@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs')
 const User = require('../models/User')
+const { MANAGER_ACCESS_MODULES } = require('../models/User')
 const BusinessAdvisor = require('../models/BusinessAdvisor')
 const Candidate = require('../models/Candidate')
 const Company = require('../models/Company')
@@ -13,6 +14,37 @@ const trimmedText = (value) => (isText(value) ? value.trim() : '')
 const isPlainObject = (value) => value === undefined || (value && typeof value === 'object' && !Array.isArray(value))
 const requestBody = (body) => (body && typeof body === 'object' && !Array.isArray(body) ? body : {})
 const PASSWORD_MAX_LENGTH = 72
+const MANAGER_ROLE = 'manager'
+
+const normalizeManagerAccess = (value) => {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))]
+}
+
+const validateManagerAccess = (access) =>
+  access.every((item) => MANAGER_ACCESS_MODULES.includes(item))
+
+const validateManagerPayload = (rawBody = {}, { partial = false } = {}) => {
+  const body = requestBody(rawBody)
+  const { name, email, password, isActive, managerAccess } = body
+
+  if (!partial && (!trimmedText(name) || !trimmedText(email) || !isText(password) || !password)) {
+    return 'Name, email, and password are required'
+  }
+
+  if (name !== undefined && !trimmedText(name)) return 'Name must be text'
+  if (email !== undefined && !trimmedText(email)) return 'Email must be text'
+  if (password !== undefined && !isText(password)) return 'Password must be text'
+  if (isText(password) && password.length > PASSWORD_MAX_LENGTH) return `Password cannot exceed ${PASSWORD_MAX_LENGTH} characters`
+  if (isActive !== undefined && typeof isActive !== 'boolean') return 'isActive must be true or false'
+
+  if (managerAccess !== undefined) {
+    if (!Array.isArray(managerAccess)) return 'Manager access must be an array'
+    if (!validateManagerAccess(normalizeManagerAccess(managerAccess))) return 'Manager access contains an unsupported module'
+  }
+
+  return null
+}
 
 const validateBusinessAdvisorPayload = (rawBody = {}, { partial = false } = {}) => {
   const body = requestBody(rawBody)
@@ -40,6 +72,123 @@ const invalidateBusinessAdvisorCaches = (userId) =>
     userId ? invalidateCache(`/api/ba/profile/${userId}`).catch(() => 0) : Promise.resolve(0),
     userId ? invalidateCache(`/api/ba/${userId}/public-form-count`).catch(() => 0) : Promise.resolve(0)
   ])
+
+const listManagers = async (_req, res) => {
+  const managers = await User.find({ role: MANAGER_ROLE }).sort({ createdAt: -1 })
+  res.json({ managers })
+}
+
+const createManager = async (req, res) => {
+  const body = requestBody(req.body)
+  const { name, email, password, isActive } = body
+  const validationError = validateManagerPayload(body)
+
+  if (validationError) {
+    return res.status(400).json({ message: validationError })
+  }
+
+  const managerAccess = normalizeManagerAccess(body.managerAccess)
+
+  if (!managerAccess.length) {
+    return res.status(400).json({ message: 'Select at least one manager access module' })
+  }
+
+  const normalizedName = trimmedText(name)
+  const normalizedEmail = trimmedText(email).toLowerCase()
+  const exists = await User.findOne({ email: normalizedEmail })
+
+  if (exists) {
+    return res.status(409).json({ message: 'A user with this email already exists' })
+  }
+
+  const hashed = await bcrypt.hash(password, 10)
+  const manager = await User.create({
+    name: normalizedName,
+    email: normalizedEmail,
+    password: hashed,
+    role: MANAGER_ROLE,
+    managerAccess,
+    isActive: isActive === undefined ? true : Boolean(isActive)
+  })
+
+  res.status(201).json({ manager })
+}
+
+const updateManager = async (req, res) => {
+  const body = requestBody(req.body)
+  const { name, email, isActive } = body
+  const validationError = validateManagerPayload(body, { partial: true })
+
+  if (validationError) {
+    return res.status(400).json({ message: validationError })
+  }
+
+  const manager = await User.findOne({ _id: req.params.id, role: MANAGER_ROLE })
+
+  if (!manager) {
+    return res.status(404).json({ message: 'Manager not found' })
+  }
+
+  const normalizedEmail = email !== undefined ? trimmedText(email).toLowerCase() : undefined
+  if (normalizedEmail && normalizedEmail !== manager.email) {
+    const exists = await User.findOne({ email: normalizedEmail, _id: { $ne: manager._id } })
+
+    if (exists) {
+      return res.status(409).json({ message: 'A user with this email already exists' })
+    }
+
+    manager.email = normalizedEmail
+  }
+
+  if (name !== undefined) manager.name = trimmedText(name)
+  if (isActive !== undefined) manager.isActive = isActive
+  if (body.managerAccess !== undefined) {
+    const managerAccess = normalizeManagerAccess(body.managerAccess)
+    if (!managerAccess.length) {
+      return res.status(400).json({ message: 'Select at least one manager access module' })
+    }
+    manager.managerAccess = managerAccess
+    manager.tokenVersion = Number(manager.tokenVersion || 0) + 1
+  }
+
+  await manager.save()
+  res.json({ manager })
+}
+
+const resetManagerPassword = async (req, res) => {
+  const { newPassword } = requestBody(req.body)
+
+  if (!isText(newPassword) || newPassword.length < 6) {
+    return res.status(400).json({ message: 'New password must be at least 6 characters' })
+  }
+
+  if (newPassword.length > PASSWORD_MAX_LENGTH) {
+    return res.status(400).json({ message: `New password cannot exceed ${PASSWORD_MAX_LENGTH} characters` })
+  }
+
+  const manager = await User.findOne({ _id: req.params.id, role: MANAGER_ROLE }).select('+password')
+
+  if (!manager) {
+    return res.status(404).json({ message: 'Manager not found' })
+  }
+
+  manager.password = await bcrypt.hash(newPassword, 10)
+  manager.tokenVersion = Number(manager.tokenVersion || 0) + 1
+  await manager.save()
+
+  res.json({ message: 'Manager password reset successfully' })
+}
+
+const deleteManager = async (req, res) => {
+  const manager = await User.findOne({ _id: req.params.id, role: MANAGER_ROLE })
+
+  if (!manager) {
+    return res.status(404).json({ message: 'Manager not found' })
+  }
+
+  await manager.deleteOne()
+  res.json({ message: 'Manager removed' })
+}
 
 const assignAdvisorCode = async (user) => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -274,5 +423,10 @@ module.exports = {
   createBusinessAdvisor,
   updateBusinessAdvisorUser,
   resetBusinessAdvisorPassword,
-  deleteBusinessAdvisorUser
+  deleteBusinessAdvisorUser,
+  listManagers,
+  createManager,
+  updateManager,
+  resetManagerPassword,
+  deleteManager
 }

@@ -95,6 +95,16 @@ const employeeSchema = new mongoose.Schema(
       ref: 'EmsEmployee',
       default: null
     },
+    crmUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CrmUser',
+      default: null
+    },
+    appUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
     workLocation: {
       type: String,
       trim: true,
@@ -152,6 +162,8 @@ employeeSchema.index({ employeeId: 1 }, { unique: true })
 employeeSchema.index({ email: 1 }, { unique: true })
 employeeSchema.index({ department: 1, status: 1 })
 employeeSchema.index({ manager: 1 })
+employeeSchema.index({ crmUserId: 1 })
+employeeSchema.index({ appUserId: 1 })
 employeeSchema.index({ isDeleted: 1 })
 
 employeeSchema.pre('save', async function hashPassword() {

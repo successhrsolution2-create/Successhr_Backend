@@ -93,7 +93,7 @@ const updateSchedule = async (req, res) => {
   const payload = await normalizeSchedulePayload(req.body)
   payload.updatedBy = req.emsUser?.id || null
   const schedule = await WorkSchedule.findByIdAndUpdate(req.params.id, payload, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true
   })
     .populate('employee', 'employeeId firstName lastName email')
@@ -110,7 +110,7 @@ const deleteSchedule = async (req, res) => {
   const schedule = await WorkSchedule.findByIdAndUpdate(
     req.params.id,
     { isActive: false, updatedBy: req.emsUser?.id || null },
-    { new: true }
+    { returnDocument: 'after' }
   )
 
   if (!schedule) {

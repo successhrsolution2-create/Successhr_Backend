@@ -1,7 +1,17 @@
 const jwt = require('jsonwebtoken')
+const bcrypt = require('bcryptjs')
 
 const Employee = require('../models/Employee')
+const CrmUser = require('../../crm/models/CrmUser.model')
+const User = require('../../models/User')
+const { ATTENDANCE_LOGIN_ROLES } = require('../config/emsConstants')
 const { getEmsJwtSecret } = require('../middleware/emsAuth')
+
+const ATTENDANCE_ACCESS_MESSAGE = 'This EMS role is not enabled for attendance management'
+const APP_ATTENDANCE_ROLES = ['superAdmin', 'candidateAdmin', 'manager']
+
+const canUseAttendanceManagement = (employee) =>
+  ATTENDANCE_LOGIN_ROLES.includes(employee?.role)
 
 const getEmsRefreshSecret = () => {
   return process.env.EMS_REFRESH_SECRET || getEmsJwtSecret()
@@ -37,33 +47,117 @@ const sanitizeEmployee = (employee) => {
   return safe
 }
 
-const login = async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase()
-  const password = String(req.body?.password || '')
+const employeeLoginQuery = (loginId) => ({
+  isDeleted: false,
+  $or: [
+    { email: loginId.toLowerCase() },
+    { employeeId: loginId.toUpperCase() }
+  ]
+})
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' })
+const appLoginQuery = (loginId) =>
+  loginId.includes('@') ? { email: loginId.toLowerCase() } : { employeeId: loginId.toUpperCase() }
+
+const linkedEmployeeQuery = ({ email, employeeId, appUserId, crmUserId }) => {
+  const matches = []
+  if (appUserId) matches.push({ appUserId })
+  if (crmUserId) matches.push({ crmUserId })
+  if (email) matches.push({ email: String(email).toLowerCase() })
+  if (employeeId) matches.push({ employeeId: String(employeeId).toUpperCase() })
+
+  return {
+    isDeleted: false,
+    status: 'active',
+    role: { $in: ATTENDANCE_LOGIN_ROLES },
+    $or: matches
   }
+}
 
-  const employee = await Employee.findOne({ email, isDeleted: false }).select('+password +tokenVersion')
-  if (!employee || employee.status !== 'active') {
-    return res.status(401).json({ message: 'Invalid EMS email or password' })
-  }
+const findLinkedEmployee = async (link) => {
+  const query = linkedEmployeeQuery(link)
+  if (!query.$or.length) return null
+  return Employee.findOne(query).select('+tokenVersion')
+}
 
-  const matches = await employee.comparePassword(password)
-  if (!matches) {
-    return res.status(401).json({ message: 'Invalid EMS email or password' })
-  }
-
+const authResponse = (res, employee) => {
   const accessToken = signEmsToken(employee)
   const refreshTokenValue = signEmsRefreshToken(employee)
 
-  res.json({
+  return res.json({
     accessToken,
     refreshToken: refreshTokenValue,
     token: accessToken,
     user: sanitizeEmployee(employee)
   })
+}
+
+const loginWithEmployeeAccount = async (loginId, password) => {
+  const employee = await Employee.findOne(employeeLoginQuery(loginId)).select('+password +tokenVersion')
+  if (!employee || employee.status !== 'active') return { matched: false }
+
+  const matches = await employee.comparePassword(password)
+  if (!matches) return { matched: false }
+
+  if (!canUseAttendanceManagement(employee)) return { matched: true, forbidden: true }
+  return { matched: true, employee }
+}
+
+const loginWithAppAdminAccount = async (loginId, password) => {
+  const user = await User.findOne(appLoginQuery(loginId)).select('+password')
+  if (!user || !user.isActive || !APP_ATTENDANCE_ROLES.includes(user.role)) return { matched: false }
+
+  const matches = await bcrypt.compare(password, user.password)
+  if (!matches) return { matched: false }
+
+  const employee = await findLinkedEmployee({
+    appUserId: user._id,
+    email: user.email,
+    employeeId: user.employeeId
+  })
+
+  return employee ? { matched: true, employee } : { matched: true, forbidden: true }
+}
+
+const loginWithCrmAccount = async (loginId, password) => {
+  const crmUser = await CrmUser.findOne(appLoginQuery(loginId)).select('+password')
+  if (!crmUser || !crmUser.isActive || crmUser.role !== 'crm_employee') return { matched: false }
+
+  const matches = await crmUser.comparePassword(password)
+  if (!matches) return { matched: false }
+
+  const employee = await findLinkedEmployee({
+    crmUserId: crmUser._id,
+    email: crmUser.email,
+    employeeId: crmUser.employeeId
+  })
+
+  return employee ? { matched: true, employee } : { matched: true, forbidden: true }
+}
+
+const login = async (req, res) => {
+  const loginId = String(req.body?.email || req.body?.employeeId || '').trim()
+  const password = String(req.body?.password || '')
+
+  if (!loginId || !password) {
+    return res.status(400).json({ message: 'Employee ID/email and password are required' })
+  }
+
+  const attempts = [
+    await loginWithEmployeeAccount(loginId, password),
+    await loginWithAppAdminAccount(loginId, password),
+    await loginWithCrmAccount(loginId, password)
+  ]
+
+  const validLogin = attempts.find((attempt) => attempt.matched && !attempt.forbidden) ||
+    attempts.find((attempt) => attempt.matched)
+  if (!validLogin) {
+    return res.status(401).json({ message: 'Invalid EMS email or password' })
+  }
+  if (validLogin.forbidden) {
+    return res.status(403).json({ message: ATTENDANCE_ACCESS_MESSAGE })
+  }
+
+  return authResponse(res, validLogin.employee)
 }
 
 const me = async (req, res) => {
@@ -87,6 +181,10 @@ const me = async (req, res) => {
     return res.status(404).json({ message: 'EMS user not found' })
   }
 
+  if (!canUseAttendanceManagement(employee)) {
+    return res.status(403).json({ message: ATTENDANCE_ACCESS_MESSAGE })
+  }
+
   return res.json({ user: sanitizeEmployee(employee) })
 }
 
@@ -108,19 +206,15 @@ const refreshToken = async (req, res) => {
       return res.status(401).json({ message: 'EMS user is inactive' })
     }
 
+    if (!canUseAttendanceManagement(employee)) {
+      return res.status(403).json({ message: ATTENDANCE_ACCESS_MESSAGE })
+    }
+
     if (Number(decoded.tokenVersion ?? -1) !== Number(employee.tokenVersion || 0)) {
       return res.status(401).json({ message: 'EMS refresh token has been revoked' })
     }
 
-    const accessToken = signEmsToken(employee)
-    const nextRefreshToken = signEmsRefreshToken(employee)
-
-    return res.json({
-      accessToken,
-      refreshToken: nextRefreshToken,
-      token: accessToken,
-      user: sanitizeEmployee(employee)
-    })
+    return authResponse(res, employee)
   } catch (_error) {
     return res.status(401).json({ message: 'Invalid or expired EMS refresh token' })
   }
