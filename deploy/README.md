@@ -22,6 +22,7 @@ Target instance: t3.small minimum, t3.medium preferred for sustained traffic.
    `pm2 startup`
    `pm2 save`
 5. Copy `deploy/nginx/super-admin.conf` to `/etc/nginx/sites-available/super-admin`, update `server_name`, SSL paths, upload alias, then symlink it into `sites-enabled`.
+   Do not add `Access-Control-Allow-*` headers in Nginx for `/api/` or `/crm/`; Express already sends CORS headers.
 6. Run index creation once from the backend folder:
    `node scripts/createIndexes.js`
 7. Enable swap once on t3.small:

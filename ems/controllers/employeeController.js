@@ -62,11 +62,60 @@ const createHttpError = (status, message) => {
   return error
 }
 
+const isDuplicateKeyError = (error) => Number(error?.code) === 11000
+
+const findLegacyMirrorEmployee = (matches = []) =>
+  Employee.findOne({ $or: matches }).sort({ isDeleted: 1, updatedAt: -1 })
+
+const deletedEmployeeId = (id) => `DELETED_${String(id).toUpperCase()}_${Date.now()}`
+const deletedEmployeeEmail = (id) => `deleted-${String(id).toLowerCase()}-${Date.now()}@deleted.local`
+const deletedLoginEmployeeId = (id) => `DELETED_LOGIN_${String(id).toUpperCase()}_${Date.now()}`
+
+const releaseDeletedEmployeeUniqueFields = async ({ employeeId, email, updatedBy }) => {
+  const matches = []
+  if (employeeId) matches.push({ employeeId })
+  if (email) matches.push({ email })
+  if (!matches.length) return
+
+  const deletedEmployees = await Employee.find({ isDeleted: true, $or: matches }).select('_id employeeId email')
+  for (const employee of deletedEmployees) {
+    await Employee.updateOne(
+      { _id: employee._id, isDeleted: true },
+      {
+        $set: {
+          employeeId: deletedEmployeeId(employee._id),
+          email: deletedEmployeeEmail(employee._id),
+          archivedEmployeeId: employee.employeeId,
+          archivedEmail: employee.email,
+          updatedBy: updatedBy || null
+        }
+      }
+    )
+  }
+}
+
+const canReuseInactiveAppUser = async (user) => {
+  if (!user || user.isActive !== false) return false
+  const activeEmployee = await Employee.exists({ appUserId: user._id, isDeleted: false })
+  return !activeEmployee
+}
+
+const canReuseInactiveCrmUser = async (user) => {
+  if (!user || user.isActive !== false) return false
+  const activeEmployee = await Employee.exists({ crmUserId: user._id, isDeleted: false })
+  return !activeEmployee
+}
+
 const syncCrmEmployeeLogin = async (employee, rawPassword) => {
   if (!employee || employee.role !== 'crm_employee') return
 
   const existingByEmail = await CrmUser.findOne({ email: employee.email }).select('+password')
-  if (existingByEmail && existingByEmail.role !== 'crm_employee') {
+  const existingByEmployeeId = employee.employeeId
+    ? await CrmUser.findOne({ employeeId: employee.employeeId }).select('+password')
+    : null
+  const canReuseEmailLogin = await canReuseInactiveCrmUser(existingByEmail)
+
+  if (existingByEmail && existingByEmail.role !== 'crm_employee' && !canReuseEmailLogin) {
     throw createHttpError(409, 'This email is already used by a CRM admin account')
   }
 
@@ -79,6 +128,19 @@ const syncCrmEmployeeLogin = async (employee, rawPassword) => {
   }
 
   if (!crmUser) crmUser = existingByEmail
+  if (existingByEmployeeId && crmUser && String(existingByEmployeeId._id) !== String(crmUser._id)) {
+    if (await canReuseInactiveCrmUser(existingByEmployeeId)) {
+      await CrmUser.updateOne({ _id: existingByEmployeeId._id }, { $set: { employeeId: deletedLoginEmployeeId(existingByEmployeeId._id) } })
+    } else {
+      throw createHttpError(409, 'This employee ID is already used by another CRM employee login')
+    }
+  }
+  if (!crmUser && existingByEmployeeId) {
+    if (existingByEmployeeId.role !== 'crm_employee' && !(await canReuseInactiveCrmUser(existingByEmployeeId))) {
+      throw createHttpError(409, 'This employee ID is already used by another CRM login')
+    }
+    crmUser = existingByEmployeeId
+  }
 
   if (!crmUser) {
     if (!rawPassword) {
@@ -119,7 +181,7 @@ const deactivateCrmEmployeeLogin = async (employee) => {
   if (!employee?.crmUserId) return
 
   await CrmUser.findByIdAndUpdate(employee.crmUserId, {
-    $set: { isActive: false },
+    $set: { isActive: false, employeeId: deletedLoginEmployeeId(employee.crmUserId) },
     $inc: { tokenVersion: 1 }
   })
 }
@@ -129,8 +191,12 @@ const syncAppUserLogin = async (employee, rawPassword) => {
   if (!employee || !appRole) return
 
   const existingByEmail = await User.findOne({ email: employee.email }).select('+password')
+  const existingByEmployeeId = employee.employeeId
+    ? await User.findOne({ employeeId: employee.employeeId }).select('+password')
+    : null
   const linkedToSameUser = employee.appUserId && existingByEmail && String(existingByEmail._id) === String(employee.appUserId)
-  if (existingByEmail && existingByEmail.role !== appRole && !linkedToSameUser) {
+  const canReuseEmailLogin = await canReuseInactiveAppUser(existingByEmail)
+  if (existingByEmail && existingByEmail.role !== appRole && !linkedToSameUser && !canReuseEmailLogin) {
     throw createHttpError(409, 'This email is already used by another login role')
   }
 
@@ -143,6 +209,19 @@ const syncAppUserLogin = async (employee, rawPassword) => {
   }
 
   if (!appUser) appUser = existingByEmail
+  if (existingByEmployeeId && appUser && String(existingByEmployeeId._id) !== String(appUser._id)) {
+    if (await canReuseInactiveAppUser(existingByEmployeeId)) {
+      await User.updateOne({ _id: existingByEmployeeId._id }, { $set: { employeeId: deletedLoginEmployeeId(existingByEmployeeId._id) } })
+    } else {
+      throw createHttpError(409, 'This employee ID is already used by another login account')
+    }
+  }
+  if (!appUser && existingByEmployeeId) {
+    if (existingByEmployeeId.role !== appRole && !(await canReuseInactiveAppUser(existingByEmployeeId))) {
+      throw createHttpError(409, 'This employee ID is already used by another login role')
+    }
+    appUser = existingByEmployeeId
+  }
 
   if (!appUser) {
     if (!rawPassword) {
@@ -183,7 +262,7 @@ const deactivateAppUserLogin = async (employee) => {
   if (!employee?.appUserId) return
 
   await User.findByIdAndUpdate(employee.appUserId, {
-    $set: { isActive: false },
+    $set: { isActive: false, employeeId: deletedLoginEmployeeId(employee.appUserId) },
     $inc: { tokenVersion: 1 }
   })
 }
@@ -192,13 +271,12 @@ const mirrorLegacyCrmEmployees = async () => {
   const crmUsers = await CrmUser.find({ role: 'crm_employee' }).select('+password').lean()
 
   for (const crmUser of crmUsers) {
-    let employee = await Employee.findOne({
-      $or: [
-        { crmUserId: crmUser._id },
-        { email: crmUser.email }
-      ],
-      isDeleted: false
-    })
+    let employee = await findLegacyMirrorEmployee([
+      { crmUserId: crmUser._id },
+      { email: crmUser.email }
+    ])
+
+    if (employee?.isDeleted) continue
 
     if (employee && employee.role === 'crm_employee') {
       const updates = {}
@@ -219,18 +297,23 @@ const mirrorLegacyCrmEmployees = async () => {
     const employeeId = employeeIdTaken ? await getNextEmployeeId() : requestedEmployeeId
     const { firstName, lastName } = splitName(crmUser.name)
 
-    employee = await Employee.create({
-      employeeId,
-      firstName,
-      lastName,
-      email: crmUser.email,
-      role: 'crm_employee',
-      status: crmUser.isActive ? 'active' : 'inactive',
-      designation: 'CRM Employee',
-      employmentType: 'Full-time',
-      crmUserId: crmUser._id,
-      createdBy: crmUser.createdBy || null
-    })
+    try {
+      employee = await Employee.create({
+        employeeId,
+        firstName,
+        lastName,
+        email: crmUser.email,
+        role: 'crm_employee',
+        status: crmUser.isActive ? 'active' : 'inactive',
+        designation: 'CRM Employee',
+        employmentType: 'Full-time',
+        crmUserId: crmUser._id,
+        createdBy: crmUser.createdBy || null
+      })
+    } catch (error) {
+      if (isDuplicateKeyError(error)) continue
+      throw error
+    }
 
     if (crmUser.password) {
       await Employee.updateOne({ _id: employee._id }, { $set: { password: crmUser.password } })
@@ -249,13 +332,12 @@ const mirrorLegacyAppRoleUsers = async () => {
     const employeeRole = employeeRoleForAppRole(user.role)
     if (!employeeRole) continue
 
-    let employee = await Employee.findOne({
-      $or: [
-        { appUserId: user._id },
-        { email: user.email }
-      ],
-      isDeleted: false
-    })
+    let employee = await findLegacyMirrorEmployee([
+      { appUserId: user._id },
+      { email: user.email }
+    ])
+
+    if (employee?.isDeleted) continue
 
     if (employee && APP_LOGIN_ROLES.includes(employee.role)) {
       const updates = {}
@@ -277,17 +359,23 @@ const mirrorLegacyAppRoleUsers = async () => {
 
     const { firstName, lastName } = splitName(user.name)
     const employeeId = await getNextEmployeeId()
-    const mirroredEmployee = await Employee.create({
-      employeeId,
-      firstName,
-      lastName,
-      email: user.email,
-      role: employeeRole,
-      status: user.isActive === false ? 'inactive' : 'active',
-      designation: employeeRole === 'candidate_admin' ? 'Candidate Management' : 'Manager',
-      employmentType: 'Full-time',
-      appUserId: user._id
-    })
+    let mirroredEmployee
+    try {
+      mirroredEmployee = await Employee.create({
+        employeeId,
+        firstName,
+        lastName,
+        email: user.email,
+        role: employeeRole,
+        status: user.isActive === false ? 'inactive' : 'active',
+        designation: employeeRole === 'candidate_admin' ? 'Candidate Management' : 'Manager',
+        employmentType: 'Full-time',
+        appUserId: user._id
+      })
+    } catch (error) {
+      if (isDuplicateKeyError(error)) continue
+      throw error
+    }
 
     if (user.employeeId !== mirroredEmployee.employeeId) {
       await User.updateOne({ _id: user._id }, { $set: { employeeId: mirroredEmployee.employeeId } })
@@ -364,6 +452,11 @@ const createEmployee = async (req, res) => {
 
   payload.employeeId = payload.employeeId || (await getNextEmployeeId())
   payload.createdBy = req.emsUser?.id || null
+  await releaseDeletedEmployeeUniqueFields({
+    employeeId: payload.employeeId,
+    email: payload.email,
+    updatedBy: req.emsUser?.id
+  })
 
   const employee = await Employee.create(payload)
   await syncCrmEmployeeLogin(employee, payload.password)
@@ -455,21 +548,28 @@ const updateEmployee = async (req, res) => {
 }
 
 const deleteEmployee = async (req, res) => {
+  const existingEmployee = await Employee.findOne({ _id: req.params.id, isDeleted: false })
+  if (!existingEmployee) {
+    return res.status(404).json({ message: 'Employee not found' })
+  }
+
   const employee = await Employee.findOneAndUpdate(
-    { _id: req.params.id, isDeleted: false },
+    { _id: existingEmployee._id, isDeleted: false },
     {
-      isDeleted: true,
-      deletedAt: new Date(),
-      status: 'terminated',
-      updatedBy: req.emsUser?.id || null,
+      $set: {
+        employeeId: deletedEmployeeId(existingEmployee._id),
+        email: deletedEmployeeEmail(existingEmployee._id),
+        archivedEmployeeId: existingEmployee.employeeId,
+        archivedEmail: existingEmployee.email,
+        isDeleted: true,
+        deletedAt: new Date(),
+        status: 'terminated',
+        updatedBy: req.emsUser?.id || null
+      },
       $inc: { tokenVersion: 1 }
     },
     { returnDocument: 'after' }
   )
-
-  if (!employee) {
-    return res.status(404).json({ message: 'Employee not found' })
-  }
 
   await deactivateCrmEmployeeLogin(employee)
   await deactivateAppUserLogin(employee)

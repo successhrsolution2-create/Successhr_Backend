@@ -133,6 +133,16 @@ const employeeSchema = new mongoose.Schema(
       default: false
     },
     deletedAt: Date,
+    archivedEmployeeId: {
+      type: String,
+      trim: true,
+      uppercase: true
+    },
+    archivedEmail: {
+      type: String,
+      trim: true,
+      lowercase: true
+    },
     tokenVersion: {
       type: Number,
       default: 0
