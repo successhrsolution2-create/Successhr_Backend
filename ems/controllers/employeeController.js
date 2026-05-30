@@ -7,6 +7,7 @@ const Employee = require('../models/Employee')
 const Attendance = require('../models/Attendance')
 const Leave = require('../models/Leave')
 const Payroll = require('../models/Payroll')
+const WorkSchedule = require('../models/WorkSchedule')
 const CrmUser = require('../../crm/models/CrmUser.model')
 const User = require('../../models/User')
 const { MANAGER_ACCESS_MODULES } = require('../../models/User')
@@ -573,6 +574,10 @@ const deleteEmployee = async (req, res) => {
 
   await deactivateCrmEmployeeLogin(employee)
   await deactivateAppUserLogin(employee)
+  await WorkSchedule.updateMany(
+    { employee: employee._id, isActive: true },
+    { $set: { isActive: false, updatedBy: req.emsUser?.id || null } }
+  )
   res.json({ message: 'Employee deleted' })
 }
 

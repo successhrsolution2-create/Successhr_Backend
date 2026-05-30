@@ -48,19 +48,17 @@ const normalizeSchedulePayload = async (body = {}) => {
 
 const listSchedules = async (req, res) => {
   const { page, limit, skip } = pagination(req.query)
-  const filter = {}
-  if (req.query.isActive !== undefined) filter.isActive = req.query.isActive === 'true'
+  const filter = {
+    isActive: req.query.isActive !== undefined ? req.query.isActive === 'true' : true
+  }
   if (req.query.officeLocation) filter.officeLocation = req.query.officeLocation
 
-  let employeeIds = null
+  const employeeFilter = { isDeleted: false }
   if (req.query.search) {
-    const employeeFilter = {
-      isDeleted: false,
-      ...buildSearch(req.query.search, ['employeeId', 'firstName', 'lastName', 'email'])
-    }
-    employeeIds = await Employee.find(employeeFilter).distinct('_id')
-    filter.employee = { $in: employeeIds }
+    Object.assign(employeeFilter, buildSearch(req.query.search, ['employeeId', 'firstName', 'lastName', 'email']))
   }
+  const employeeIds = await Employee.find(employeeFilter).distinct('_id')
+  filter.employee = { $in: employeeIds }
 
   const [items, total] = await Promise.all([
     WorkSchedule.find(filter)

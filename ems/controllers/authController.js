@@ -91,6 +91,52 @@ const authResponse = (res, employee) => {
   })
 }
 
+const passwordMatchesEmployee = async (employee, password) => {
+  if (!employee?.password) return false
+  return employee.comparePassword(password)
+}
+
+const passwordMatchesAppUser = async (employee, password) => {
+  if (!employee?.appUserId) return false
+  const user = await User.findOne({ _id: employee.appUserId, isActive: true }).select('+password')
+  if (!user?.password) return false
+  return bcrypt.compare(password, user.password)
+}
+
+const passwordMatchesCrmUser = async (employee, password) => {
+  if (!employee?.crmUserId) return false
+  const user = await CrmUser.findOne({ _id: employee.crmUserId, isActive: true }).select('+password')
+  if (!user?.password) return false
+  return user.comparePassword(password)
+}
+
+const updateLinkedLoginPasswords = async (employee, newPassword) => {
+  const updates = []
+
+  if (employee.appUserId) {
+    updates.push(
+      User.updateOne(
+        { _id: employee.appUserId },
+        {
+          $set: { password: await bcrypt.hash(newPassword, 10) },
+          $inc: { tokenVersion: 1 }
+        }
+      )
+    )
+  }
+
+  if (employee.crmUserId) {
+    const crmUser = await CrmUser.findById(employee.crmUserId).select('+password')
+    if (crmUser) {
+      crmUser.password = newPassword
+      crmUser.tokenVersion = Number(crmUser.tokenVersion || 0) + 1
+      updates.push(crmUser.save())
+    }
+  }
+
+  await Promise.all(updates)
+}
+
 const loginWithEmployeeAccount = async (loginId, password) => {
   const employee = await Employee.findOne(employeeLoginQuery(loginId)).select('+password +tokenVersion')
   if (!employee || employee.status !== 'active') return { matched: false }
@@ -220,7 +266,49 @@ const refreshToken = async (req, res) => {
   }
 }
 
+const changePassword = async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || '')
+  const newPassword = String(req.body?.newPassword || '')
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ message: 'Current password and new password are required' })
+  }
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({ message: 'New password must be at least 8 characters' })
+  }
+
+  if (currentPassword === newPassword) {
+    return res.status(400).json({ message: 'New password must be different from current password' })
+  }
+
+  const employee = await Employee.findOne({ _id: req.emsUser.id, isDeleted: false }).select('+password +tokenVersion')
+  if (!employee || employee.status !== 'active') {
+    return res.status(404).json({ message: 'EMS user not found' })
+  }
+
+  if (!canUseAttendanceManagement(employee)) {
+    return res.status(403).json({ message: ATTENDANCE_ACCESS_MESSAGE })
+  }
+
+  const validCurrentPassword =
+    await passwordMatchesEmployee(employee, currentPassword) ||
+    await passwordMatchesAppUser(employee, currentPassword) ||
+    await passwordMatchesCrmUser(employee, currentPassword)
+
+  if (!validCurrentPassword) {
+    return res.status(401).json({ message: 'Current password is incorrect' })
+  }
+
+  employee.password = newPassword
+  await employee.save()
+  await updateLinkedLoginPasswords(employee, newPassword)
+
+  return res.json({ message: 'Password updated' })
+}
+
 module.exports = {
+  changePassword,
   login,
   me,
   refreshToken
