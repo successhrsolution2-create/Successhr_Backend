@@ -111,6 +111,15 @@ const emsAuth = async (req, res, next) => {
           req.emsUser = appPrincipal
           return next()
         }
+
+        const cookiePrincipal = cookieToken
+          ? await authenticateAppUserToken(cookieToken).catch(() => null)
+          : null
+        if (cookiePrincipal) {
+          req.emsUser = cookiePrincipal
+          return next()
+        }
+
         throw error
       }
     }
@@ -134,7 +143,9 @@ const optionalEmsAuth = async (req, _res, next) => {
     const token = bearerToken(req)
     const cookieToken = appSessionToken(req)
     if (token) {
-      req.emsUser = await authenticateEmsToken(token).catch(() => authenticateAppUserToken(token))
+      req.emsUser = await authenticateEmsToken(token)
+        .catch(() => authenticateAppUserToken(token))
+        .catch(() => (cookieToken ? authenticateAppUserToken(cookieToken) : null))
     } else if (cookieToken) {
       req.emsUser = await authenticateAppUserToken(cookieToken)
     }

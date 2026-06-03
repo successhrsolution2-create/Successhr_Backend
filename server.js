@@ -197,6 +197,8 @@ app.use('/api/students', studentRoutes)
 app.use('/api/companies', companyRoutes)
 app.use('/api/placements', placementRoutes)
 app.use('/api/super-admin', require('./routes/superAdminRoutes'))
+app.use('/api/company-management', require('./routes/companyManagementRoutes'))
+app.use('/api/company-admin', require('./routes/companyAdminRoutes'))
 app.use('/api/cms', verifyToken, requireRoleOrManagerAccess('candidateManagement', 'superAdmin', 'candidateAdmin'), cmsRoutes)
 app.use('/api/ems', require('./ems/routes/index'))
 app.use('/crm/admin', requireCrmAdminAccess, require('./crm/routes/crm.admin.routes'))
@@ -308,16 +310,20 @@ const start = async () => {
   }
 }
 
-start().catch((error) => {
-  console.error(error)
-  process.exit(1)
-})
+if (require.main === module) {
+  start().catch((error) => {
+    console.error(error)
+    process.exit(1)
+  })
 
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason)
-})
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection:', reason)
+  })
 
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error)
-  process.exit(1)
-})
+  process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error)
+    process.exit(1)
+  })
+}
+
+module.exports = { app, server, start, validateEnvironment }

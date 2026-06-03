@@ -1,0 +1,27 @@
+{
+  "all": true,
+  "include": [
+    "controllers/**/*.js",
+    "routes/**/*.js",
+    "middleware/**/*.js",
+    "utils/**/*.js",
+    "crm/**/*.js",
+    "ems/**/*.js",
+    "backup/**/*.js",
+    "src/**/*.js"
+  ],
+  "exclude": [
+    "**/__tests__/**",
+    "**/node_modules/**",
+    "**/uploads/**",
+    "**/tmp/**",
+    "deploy/**",
+    "scripts/**"
+  ],
+  "reporter": [
+    "text",
+    "html",
+    "lcov"
+  ],
+  "reports-dir": "coverage/c8"
+}

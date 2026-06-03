@@ -2,6 +2,7 @@ const Company = require('../models/Company')
 const Placement = require('../models/Placement')
 const { emitToAdmin, emitToBA } = require('../socket')
 const { invalidateCache } = require('../src/utils/invalidateCache')
+const { getPagination, pagedResponse, wantsPagination } = require('../utils/pagination')
 
 const populateCompany = (query) => query.populate('submittedBy', 'name email')
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -57,10 +58,20 @@ const ownerUserId = (company) => company?.submittedBy?._id || company?.submitted
 
 const getCompanies = async (req, res) => {
   const query = req.user.role === 'superAdmin' ? {} : { submittedBy: req.user._id }
-  const companies = await Company.find(query)
+  const companiesQuery = Company.find(query)
     .populate('submittedBy', 'name email')
     .sort({ status: 1, priorityOrder: 1, createdAt: -1 })
 
+  if (wantsPagination(req.query)) {
+    const { page, limit, skip } = getPagination(req.query)
+    const [total, companies] = await Promise.all([
+      Company.countDocuments(query),
+      companiesQuery.skip(skip).limit(limit)
+    ])
+    return res.json(pagedResponse({ data: companies, total, page, limit }))
+  }
+
+  const companies = await companiesQuery
   res.json(companies)
 }
 

@@ -6,6 +6,7 @@ const { syncCmsFromCandidate } = require('../utils/candidateStatusSync')
 const User = require('../models/User')
 const { emitToAdmin, emitToBA } = require('../socket')
 const { invalidateCache } = require('../src/utils/invalidateCache')
+const { getPagination, pagedResponse, wantsPagination } = require('../utils/pagination')
 
 const placementPopulate = (query) =>
   query
@@ -425,12 +426,49 @@ const getPlacements = async (req, res) => {
     if (to) query.createdAt.$lte = to
   }
 
-  const placements = await placementPopulate(Placement.find(query)).sort({ createdAt: -1 })
+  const placementsQuery = placementPopulate(Placement.find(query)).sort({ createdAt: -1 })
+
+  if (wantsPagination(req.query)) {
+    const { page, limit, skip } = getPagination(req.query)
+    const [total, placements] = await Promise.all([
+      Placement.countDocuments(query),
+      placementsQuery.skip(skip).limit(limit)
+    ])
+    return res.json(
+      pagedResponse({
+        data: placements.filter(isLivePlacement).map(normalizePlacementForResponse),
+        total,
+        page,
+        limit
+      })
+    )
+  }
+
+  const placements = await placementsQuery
   res.json(placements.filter(isLivePlacement).map(normalizePlacementForResponse))
 }
 
 const getMyPlacements = async (req, res) => {
-  const placements = await placementPopulate(Placement.find({ baId: req.user._id })).sort({ createdAt: -1 })
+  const query = { baId: req.user._id }
+  const placementsQuery = placementPopulate(Placement.find(query)).sort({ createdAt: -1 })
+
+  if (wantsPagination(req.query)) {
+    const { page, limit, skip } = getPagination(req.query)
+    const [total, placements] = await Promise.all([
+      Placement.countDocuments(query),
+      placementsQuery.skip(skip).limit(limit)
+    ])
+    return res.json(
+      pagedResponse({
+        data: placements.filter(isLivePlacement).map(toMyPlacementPayload),
+        total,
+        page,
+        limit
+      })
+    )
+  }
+
+  const placements = await placementsQuery
   res.json(placements.filter(isLivePlacement).map(toMyPlacementPayload))
 }
 

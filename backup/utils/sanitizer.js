@@ -6,7 +6,7 @@ const sanitizeCell = (value) => {
   if (value instanceof Date) return formatDate(value)
   if (typeof value === 'number' || typeof value === 'boolean') return value
 
-  let sanitized = String(value).trim().replace(/\x00/g, '')
+  let sanitized = String(value).trim().split(String.fromCharCode(0)).join('')
 
   if (DANGEROUS_PREFIXES.some((prefix) => sanitized.startsWith(prefix))) {
     sanitized = `'${sanitized}`

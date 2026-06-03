@@ -15,10 +15,13 @@
     "test:ems": "jest --config __tests__/setup/jest.config.js __tests__/ems --runInBand",
     "test:payroll": "jest --config __tests__/setup/jest.config.js __tests__/payroll --runInBand",
     "test:security": "jest --config __tests__/setup/jest.config.js __tests__/security --runInBand",
+    "test:c8": "c8 --reporter=text --reporter=html --reporter=lcov npm test",
+    "start:lambda-local": "node -e \"require('./lambda').handler({version:'2.0',routeKey:'GET /api/health',rawPath:'/api/health',requestContext:{http:{method:'GET',path:'/api/health'}},headers:{}},{callbackWaitsForEmptyEventLoop:false}).then(console.log).catch((error)=>{console.error(error);process.exit(1)})\"",
     "migrate:atlas": "node scripts/migrate-local-to-atlas.js",
     "migrate:candidates": "node scripts/migrate-candidates.js",
     "cleanup:public-apply": "node scripts/cleanup-public-apply-orphans.js",
     "cleanup:test-data": "node scripts/cleanup-test-data.js",
+    "reset:demo-data": "node scripts/reset-demo-data.js",
     "resequence:cms-candidate-codes": "node scripts/resequence-cms-candidate-codes.js"
   },
   "keywords": [],
@@ -41,11 +44,13 @@
     "mongoose": "^9.6.1",
     "multer": "^2.1.1",
     "nodemon": "^3.1.14",
+    "serverless-http": "^4.0.0",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@faker-js/faker": "^10.4.0",
     "@jest/globals": "^30.4.1",
+    "c8": "^11.0.0",
     "cross-env": "^10.1.0",
     "jest": "^30.4.2",
     "mongodb-memory-server": "^11.1.0",

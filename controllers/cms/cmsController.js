@@ -22,6 +22,7 @@ const {
   isCandidateDocumentKey
 } = require('../../utils/candidateDocuments')
 const { invalidateCache } = require('../../src/utils/invalidateCache')
+const { getPagination, pagedResponse, wantsPagination } = require('../../utils/pagination')
 
 const interviewDocumentLabelByKey = {
   appointmentLetter: 'Appointment Letter',
@@ -1366,7 +1367,18 @@ const listCompanies = async (req, res) => {
     ]
   }
 
-  const companies = await CmsCompany.find(query).sort({ createdAt: -1 })
+  const companiesQuery = CmsCompany.find(query).sort({ createdAt: -1 })
+
+  if (wantsPagination(req.query)) {
+    const { page, limit, skip } = getPagination(req.query)
+    const [total, companies] = await Promise.all([
+      CmsCompany.countDocuments(query),
+      companiesQuery.skip(skip).limit(limit)
+    ])
+    return res.json(pagedResponse({ data: companies, total, page, limit }))
+  }
+
+  const companies = await companiesQuery
   res.json(companies)
 }
 

@@ -26,8 +26,11 @@ const PERSONALITY_RATING_FIELDS = [
 ]
 
 const pdfPlainText = (value) =>
-  String(value ?? '')
-    .replace(/[^\x09\x0a\x0d\x20-\x7e]/g, '?')
+  Array.from(String(value ?? ''), (character) => {
+    const code = character.charCodeAt(0)
+    return code === 9 || code === 10 || code === 13 || (code >= 32 && code <= 126) ? character : '?'
+  })
+    .join('')
     .replace(/\s+/g, ' ')
     .trim()
 

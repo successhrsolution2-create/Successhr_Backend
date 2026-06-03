@@ -16,6 +16,7 @@ const {
   isCandidateDocumentKey
 } = require('../utils/candidateDocuments')
 const { invalidateCache } = require('../src/utils/invalidateCache')
+const { getPagination, pagedResponse, wantsPagination } = require('../utils/pagination')
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -371,10 +372,20 @@ const mirrorCandidateToCms = async (candidate, advisor, existingCmsCandidate = n
 
 const getCandidates = async (req, res) => {
   const query = req.user.role === 'superAdmin' ? {} : { submittedBy: req.user._id }
-  const candidates = await Candidate.find(query)
+  const candidatesQuery = Candidate.find(query)
     .populate('submittedBy', 'name email')
     .sort({ status: 1, priorityOrder: 1, createdAt: -1 })
 
+  if (wantsPagination(req.query)) {
+    const { page, limit, skip } = getPagination(req.query)
+    const [total, candidates] = await Promise.all([
+      Candidate.countDocuments(query),
+      candidatesQuery.skip(skip).limit(limit)
+    ])
+    return res.json(pagedResponse({ data: candidates, total, page, limit }))
+  }
+
+  const candidates = await candidatesQuery
   res.json(candidates)
 }
 
