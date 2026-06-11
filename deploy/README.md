@@ -4,13 +4,17 @@ Target instance: t3.small minimum, t3.medium preferred for sustained traffic.
 
 1. Install PM2 globally:
    `npm install -g pm2`
-2. On the EC2 server, add the two required backup secrets:
+2. On the EC2 server, make sure every production-only secret exists:
 
    ```sh
    cd /opt/successhr/app
    [ -f .env ] && cp .env ".env.bak.$(date +%Y%m%d%H%M%S)"
 
-   printf "\nBACKUP_JWT_SECRET=%s\nBACKUP_DOWNLOAD_SECRET=%s\n" "$(openssl rand -hex 48)" "$(openssl rand -hex 48)" >> .env
+   printf "\nEMS_REFRESH_SECRET=%s\nCOMPANY_ADMIN_JWT_SECRET=%s\nBACKUP_JWT_SECRET=%s\nBACKUP_DOWNLOAD_SECRET=%s\n" \
+     "$(openssl rand -hex 48)" \
+     "$(openssl rand -hex 48)" \
+     "$(openssl rand -hex 48)" \
+     "$(openssl rand -hex 48)" >> .env
 
    pm2 restart successhr-backend --update-env
    pm2 logs successhr-backend --lines 50
