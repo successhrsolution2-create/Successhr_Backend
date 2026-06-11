@@ -2,6 +2,10 @@ const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const CompanyAdmin = require('../models/companyManagement/CompanyAdmin')
 const CompanyInterviewInfo = require('../models/companyManagement/CompanyInterviewInfo')
+const CompanyVacancy = require('../models/companyManagement/CompanyVacancy')
+const { ensureLoginIdentityAvailable } = require('../utils/loginIdentity')
+const { uploadToS3 } = require('../utils/s3Upload')
+const { validateUploadFile } = require('../utils/fileValidation')
 const {
   COMPANY_ADMIN_COOKIE_NAME,
   COMPANY_ADMIN_SESSION_MARKER,
@@ -75,10 +79,36 @@ const normalizeTextList = (value, label, { maxItems = 30, maxLength = 120 } = {}
   return [...new Set(value.map((item) => optionalText(item, label, maxLength)).filter(Boolean))]
 }
 
+const normalizeTextListInput = (value, label, options = {}) => {
+  if (value === undefined || value === null || value === '') return []
+  if (Array.isArray(value)) return normalizeTextList(value, label, options)
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return []
+
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) return normalizeTextList(parsed, label, options)
+    } catch {
+      return normalizeTextList(trimmed.split(',').map((item) => item.trim()), label, options)
+    }
+  }
+
+  throw validationError(`${label} must be a list`)
+}
+
 const normalizeVacancyCount = (value) => {
   if (value === undefined || value === null || value === '') return undefined
   const normalized = Number(value)
   if (!Number.isInteger(normalized) || normalized < 0) throw validationError('Number of vacancy must be a whole number')
+  return normalized
+}
+
+const normalizeMoney = (value, label) => {
+  if (value === undefined || value === null || value === '') return undefined
+  const normalized = Number(value)
+  if (!Number.isFinite(normalized) || normalized < 0) throw validationError(`${label} must be a valid positive amount`)
   return normalized
 }
 
@@ -106,49 +136,190 @@ const normalizeCompanyAdminPayload = (rawBody, { partial = false } = {}) => {
   return payload
 }
 
-const normalizeInterviewInfoPayload = (rawBody, defaultCompanyName) => {
+const normalizeInterviewInfoPayload = (rawBody, defaultCompanyName, { allowPlacementFeedback = false } = {}) => {
   const body = requestBody(rawBody)
   const job = nestedObject(body.jobRequirements)
   const about = nestedObject(body.aboutCompany)
   const availability = nestedObject(about.availabilityForInterview)
-
-  return {
+  const candidate = nestedObject(body.candidateInterview)
+  const offer = nestedObject(candidate.offerDetails)
+  const vacancy = nestedObject(body.manpowerVacancy)
+  const source = { ...body, ...candidate, ...offer, ...vacancy }
+  const interviewStatus = normalizeChoice(source.interviewStatus, 'Interview status', ['Selected', 'Rejected', 'Hold', 'Pending']) || 'Pending'
+  const interestedForJoin = normalizeChoice(source.interestedForJoin, 'Interested for join', ['Yes', 'No'])
+  const normalized = {
     companyName: requiredText(body.companyName || defaultCompanyName, 'Company name', 180),
     companyAddress: optionalText(body.companyAddress, 'Company address', 500),
     contactPersonName: optionalText(body.contactPersonName, 'Contact person name', 120),
     contactPersonDesignation: optionalText(body.contactPersonDesignation, 'Contact person designation', 120),
     mobileNo: normalizeMobile(body.mobileNo),
     emailId: normalizeEmail(body.emailId, 'Email'),
+    candidateInterview: {
+      candidateName: requiredText(source.candidateName, 'Candidate name', 180),
+      gender: normalizeChoice(source.gender, 'Gender', ['Male', 'Female', 'Other']),
+      education: optionalText(source.education || source.candidateEducation, 'Education', 180),
+      department: optionalText(source.candidateDepartment || source.department, 'Department', 180),
+      interviewDateTime: normalizeDate(source.interviewDateTime, 'Interview date and time'),
+      attendedInterview: normalizeChoice(source.attendedInterview, 'Attend interview', ['Yes', 'No']),
+      interestedForJoin,
+      notInterestedReason: interestedForJoin === 'No' ? optionalText(source.notInterestedReason, 'Not interested reason', 1000) : undefined,
+      feedbackFromCompany: normalizeChoice(source.feedbackFromCompany, 'Feedback from company', ['Yes', 'No', 'Pending']) || 'Pending',
+      feedbackFromPlacement: allowPlacementFeedback
+        ? normalizeChoice(source.feedbackFromPlacement, 'Feedback from placement', ['Yes', 'No', 'Pending']) || 'Pending'
+        : undefined,
+      interviewStatus,
+      offerDetails: interviewStatus === 'Selected'
+        ? {
+            netSalary: normalizeMoney(source.netSalary, 'Net salary'),
+            grossSalary: normalizeMoney(source.grossSalary, 'Gross salary'),
+            ctc: normalizeMoney(source.ctc, 'CTC'),
+            department: optionalText(source.offerDepartment, 'Offer department', 180),
+            expectedDoj: normalizeDate(source.expectedDoj, 'Expected DOJ')
+          }
+        : {}
+    },
+    manpowerVacancy: {
+      jobProfile: optionalText(source.jobProfile || job.jobProfile, 'Job profile', 180),
+      department: optionalText(source.vacancyDepartment, 'Vacancy department', 180),
+      numberOfVacancy: normalizeVacancyCount(source.numberOfVacancy || job.numberOfVacancy),
+      education: optionalText(source.vacancyEducation || job.education, 'Vacancy education', 180),
+      experience: optionalText(source.experience || job.experience, 'Experience', 120),
+      salaryRange: optionalText(source.salaryRange || job.salaryRange, 'Salary range', 120),
+      jobTime: optionalText(source.jobTime || job.jobTime, 'Job time', 120),
+      shift: optionalText(source.shift || job.shift, 'Shift', 120),
+      jobLocation: optionalText(source.jobLocation || job.jobLocation, 'Job location', 300),
+      requiredKeySkills: normalizeTextListInput(source.requiredKeySkills || job.requiredKeySkills, 'Required key skills'),
+      rolesAndResponsibility: optionalText(source.rolesAndResponsibility || job.rolesAndResponsibility, 'Roles and responsibility', 2000),
+      facilities: normalizeTextListInput(source.facilities || job.facilities, 'Facilities'),
+      weeklyOff: normalizeTextListInput(source.weeklyOff || about.weeklyOff, 'Weekly off', { maxItems: 7, maxLength: 30 }),
+      manpower: optionalText(source.manpower || about.manpower, 'Manpower', 120),
+      turnover: optionalText(source.turnover || about.turnover, 'Turnover', 120),
+      plant: optionalText(source.plant || about.plant, 'Plant', 180)
+    },
     jobRequirements: {
-      jobProfile: optionalText(job.jobProfile, 'Job profile', 180),
-      education: optionalText(job.education, 'Education', 180),
-      experience: optionalText(job.experience, 'Experience', 120),
-      requiredKeySkills: normalizeTextList(job.requiredKeySkills, 'Required key skills'),
-      rolesAndResponsibility: optionalText(job.rolesAndResponsibility, 'Roles and responsibility', 2000),
-      salaryRange: optionalText(job.salaryRange, 'Salary range', 120),
-      gender: normalizeChoice(job.gender, 'Gender', ['Male', 'Female', 'Any']),
-      numberOfVacancy: normalizeVacancyCount(job.numberOfVacancy),
-      jobTime: optionalText(job.jobTime, 'Job time', 120),
-      shift: optionalText(job.shift, 'Shift', 120),
-      jobLocation: optionalText(job.jobLocation, 'Job location', 300),
+      jobProfile: optionalText(source.jobProfile || job.jobProfile, 'Job profile', 180),
+      education: optionalText(source.vacancyEducation || job.education, 'Education', 180),
+      experience: optionalText(source.experience || job.experience, 'Experience', 120),
+      requiredKeySkills: normalizeTextListInput(source.requiredKeySkills || job.requiredKeySkills, 'Required key skills'),
+      rolesAndResponsibility: optionalText(source.rolesAndResponsibility || job.rolesAndResponsibility, 'Roles and responsibility', 2000),
+      salaryRange: optionalText(source.salaryRange || job.salaryRange, 'Salary range', 120),
+      gender: normalizeChoice(source.gender || job.gender, 'Gender', ['Male', 'Female', 'Any', 'Other']) === 'Other' ? 'Any' : normalizeChoice(source.gender || job.gender, 'Gender', ['Male', 'Female', 'Any', 'Other']),
+      numberOfVacancy: normalizeVacancyCount(source.numberOfVacancy || job.numberOfVacancy),
+      jobTime: optionalText(source.jobTime || job.jobTime, 'Job time', 120),
+      shift: optionalText(source.shift || job.shift, 'Shift', 120),
+      jobLocation: optionalText(source.jobLocation || job.jobLocation, 'Job location', 300),
       ageCriteria: optionalText(job.ageCriteria, 'Age criteria', 120),
       castCriteria: optionalText(job.castCriteria, 'Caste criteria', 120),
       marriageCriteria: normalizeChoice(job.marriageCriteria, 'Marriage criteria', ['Married', 'Unmarried', 'Any']),
-      facilities: normalizeTextList(job.facilities, 'Facilities')
+      facilities: normalizeTextListInput(source.facilities || job.facilities, 'Facilities')
     },
     aboutCompany: {
-      manpower: optionalText(about.manpower, 'Manpower', 120),
-      turnover: optionalText(about.turnover, 'Turnover', 120),
-      plant: optionalText(about.plant, 'Plant', 180),
+      manpower: optionalText(source.manpower || about.manpower, 'Manpower', 120),
+      turnover: optionalText(source.turnover || about.turnover, 'Turnover', 120),
+      plant: optionalText(source.plant || about.plant, 'Plant', 180),
       availabilityForInterview: {
-        date: normalizeDate(availability.date, 'Interview date'),
-        time: optionalText(availability.time, 'Interview time', 120)
+        date: normalizeDate(source.interviewDate || availability.date, 'Interview date'),
+        time: optionalText(source.interviewTime || availability.time, 'Interview time', 120)
       },
       interviewMode: normalizeChoice(about.interviewMode, 'Interview mode', ['Online', 'Offline']),
-      weeklyOff: normalizeTextList(about.weeklyOff, 'Weekly off', { maxItems: 7, maxLength: 30 })
+      weeklyOff: normalizeTextListInput(source.weeklyOff || about.weeklyOff, 'Weekly off', { maxItems: 7, maxLength: 30 })
     }
   }
+
+  if (!allowPlacementFeedback) delete normalized.candidateInterview.feedbackFromPlacement
+
+  return normalized
 }
+
+const normalizeVacancyPayload = (rawBody, defaultCompanyName) => {
+  const body = requestBody(rawBody)
+  const vacancy = nestedObject(body.manpowerVacancy)
+  const job = nestedObject(body.jobRequirements)
+  const about = nestedObject(body.aboutCompany)
+  const source = { ...body, ...vacancy, ...job, ...about }
+
+  return {
+    companyName: requiredText(body.companyName || defaultCompanyName, 'Company name', 180),
+    jobProfile: requiredText(source.jobProfile, 'Job profile', 180),
+    department: optionalText(source.vacancyDepartment || source.department, 'Department', 180),
+    numberOfVacancy: normalizeVacancyCount(source.numberOfVacancy),
+    education: optionalText(source.vacancyEducation || source.education, 'Education', 180),
+    experience: optionalText(source.experience, 'Experience', 120),
+    salaryRange: optionalText(source.salaryRange, 'Salary range', 120),
+    jobTime: optionalText(source.jobTime, 'Job time', 120),
+    shift: optionalText(source.shift, 'Shift', 120),
+    jobLocation: optionalText(source.jobLocation, 'Job location', 300),
+    requiredKeySkills: normalizeTextListInput(source.requiredKeySkills, 'Required key skills'),
+    rolesAndResponsibility: optionalText(source.rolesAndResponsibility, 'Roles and responsibility', 2000),
+    facilities: normalizeTextListInput(source.facilities, 'Facilities'),
+    weeklyOff: normalizeTextListInput(source.weeklyOff, 'Weekly off', { maxItems: 7, maxLength: 30 }),
+    manpower: optionalText(source.manpower, 'Manpower', 120),
+    turnover: optionalText(source.turnover, 'Turnover', 120),
+    plant: optionalText(source.plant, 'Plant', 180)
+  }
+}
+
+const legacyCompanyInterviewUniqueIndexDropped = { value: false }
+
+const dropLegacyCompanyInterviewUniqueIndex = async () => {
+  if (legacyCompanyInterviewUniqueIndexDropped.value) return
+
+  try {
+    const indexes = await CompanyInterviewInfo.collection.indexes()
+    const legacyIndex = indexes.find((index) => index.name === 'companyAdminId_1' && index.unique)
+    if (legacyIndex) await CompanyInterviewInfo.collection.dropIndex('companyAdminId_1')
+  } catch {
+    // A missing collection or index should not block normal form usage.
+  } finally {
+    legacyCompanyInterviewUniqueIndexDropped.value = true
+  }
+}
+
+const fileFromRequest = (files, field) => {
+  const value = files?.[field]
+  if (Array.isArray(value)) return value[0]
+  return value
+}
+
+const uploadInterviewDocument = async (file) => {
+  if (!file) return undefined
+  validateUploadFile(file)
+  const fileUrl = await uploadToS3(file, 'company-interview-documents')
+
+  return {
+    fileName: file.originalname,
+    fileUrl,
+    mimeType: file.mimetype,
+    size: file.size,
+    uploadedAt: new Date()
+  }
+}
+
+const attachInterviewFiles = async (payload, files = {}, existing = null) => {
+  const next = {
+    ...payload,
+    candidateInterview: {
+      ...payload.candidateInterview,
+      offerDetails: {
+        ...(payload.candidateInterview?.offerDetails || {})
+      }
+    }
+  }
+
+  const resume = await uploadInterviewDocument(fileFromRequest(files, 'resume'))
+  next.candidateInterview.resume = resume || existing?.candidateInterview?.resume
+
+  if (next.candidateInterview.interviewStatus === 'Selected') {
+    const offerLetter = await uploadInterviewDocument(fileFromRequest(files, 'offerLetter'))
+    const appointmentLetter = await uploadInterviewDocument(fileFromRequest(files, 'appointmentLetter'))
+    next.candidateInterview.offerDetails.offerLetter = offerLetter || existing?.candidateInterview?.offerDetails?.offerLetter
+    next.candidateInterview.offerDetails.appointmentLetter = appointmentLetter || existing?.candidateInterview?.offerDetails?.appointmentLetter
+  }
+
+  return next
+}
+
+const populateInterviewInfo = (query) => query.populate('companyAdminId', 'name companyName email mobileNo isActive')
 
 const signCompanyAdminToken = (companyAdmin) =>
   jwt.sign(
@@ -188,7 +359,7 @@ const logout = async (req, res) => {
       if (decoded.type === 'company_admin' && decoded.id) {
         await CompanyAdmin.updateOne({ _id: decoded.id }, { $inc: { tokenVersion: 1 } })
       }
-    } catch (_error) {
+    } catch {
       // The cookie still needs clearing when a token is expired or malformed.
     }
   }
@@ -202,41 +373,114 @@ const me = async (req, res) => {
 }
 
 const dashboard = async (req, res) => {
-  const interviewInfo = await CompanyInterviewInfo.findOne({ companyAdminId: req.companyAdmin._id })
-    .select('companyName jobRequirements.jobProfile jobRequirements.numberOfVacancy aboutCompany.availabilityForInterview updatedAt createdAt')
-    .lean()
+  const [submissionCount, vacancyCount, latestInterviewInfo, latestVacancy] = await Promise.all([
+    CompanyInterviewInfo.countDocuments({ companyAdminId: req.companyAdmin._id }),
+    CompanyVacancy.countDocuments({ companyAdminId: req.companyAdmin._id }),
+    CompanyInterviewInfo.findOne({ companyAdminId: req.companyAdmin._id })
+      .select('companyName candidateInterview.candidateName candidateInterview.interviewStatus manpowerVacancy.jobProfile manpowerVacancy.numberOfVacancy updatedAt createdAt')
+      .sort({ updatedAt: -1 })
+      .lean(),
+    CompanyVacancy.findOne({ companyAdminId: req.companyAdmin._id })
+      .select('companyName jobProfile department numberOfVacancy jobLocation updatedAt createdAt')
+      .sort({ updatedAt: -1 })
+      .lean()
+  ])
 
   res.json({
     companyAdmin: req.companyAdmin,
-    interviewInfo,
-    hasInterviewInfo: Boolean(interviewInfo)
+    interviewInfo: latestInterviewInfo,
+    latestVacancy,
+    submissionCount,
+    vacancyCount,
+    hasInterviewInfo: submissionCount > 0,
+    hasVacancies: vacancyCount > 0
   })
 }
 
 const getOwnInterviewInfo = async (req, res) => {
-  const interviewInfo = await CompanyInterviewInfo.findOne({ companyAdminId: req.companyAdmin._id }).lean()
-  res.json({ interviewInfo })
+  const interviewInfo = await CompanyInterviewInfo.find({ companyAdminId: req.companyAdmin._id })
+    .sort({ updatedAt: -1 })
+    .lean()
+  res.json({ interviewInfo, records: interviewInfo })
 }
 
 const saveOwnInterviewInfo = async (req, res) => {
-  const payload = normalizeInterviewInfoPayload(req.body, req.companyAdmin.companyName)
-  const interviewInfo = await CompanyInterviewInfo.findOneAndUpdate(
-    { companyAdminId: req.companyAdmin._id },
-    { $set: { ...payload, companyAdminId: req.companyAdmin._id } },
-    { returnDocument: 'after', upsert: true, runValidators: true, setDefaultsOnInsert: true }
+  await dropLegacyCompanyInterviewUniqueIndex()
+  const existing = await CompanyInterviewInfo.findOne({ companyAdminId: req.companyAdmin._id }).sort({ updatedAt: -1 })
+  const payload = await attachInterviewFiles(
+    normalizeInterviewInfoPayload(req.body, req.companyAdmin.companyName),
+    req.files,
+    existing
   )
+  const interviewInfo = existing || new CompanyInterviewInfo({ companyAdminId: req.companyAdmin._id })
+  interviewInfo.set({ ...payload, companyAdminId: req.companyAdmin._id })
+  await interviewInfo.save()
 
   res.json({ message: 'Company interview information saved', interviewInfo })
 }
 
+const createOwnInterviewInfo = async (req, res) => {
+  await dropLegacyCompanyInterviewUniqueIndex()
+  const payload = await attachInterviewFiles(
+    normalizeInterviewInfoPayload(req.body, req.companyAdmin.companyName),
+    req.files
+  )
+  const interviewInfo = await CompanyInterviewInfo.create({ ...payload, companyAdminId: req.companyAdmin._id })
+  res.status(201).json({ message: 'Candidate interview information saved', interviewInfo })
+}
+
+const updateOwnInterviewInfo = async (req, res) => {
+  await dropLegacyCompanyInterviewUniqueIndex()
+  const interviewInfo = await CompanyInterviewInfo.findOne({ _id: req.params.id, companyAdminId: req.companyAdmin._id })
+  if (!interviewInfo) return res.status(404).json({ message: 'Candidate interview information not found' })
+
+  const payload = await attachInterviewFiles(
+    normalizeInterviewInfoPayload(req.body, req.companyAdmin.companyName),
+    req.files,
+    interviewInfo
+  )
+  const existingPlacementFeedback = interviewInfo.candidateInterview?.feedbackFromPlacement || 'Pending'
+  interviewInfo.set({ ...payload, companyAdminId: req.companyAdmin._id })
+  interviewInfo.candidateInterview.feedbackFromPlacement = existingPlacementFeedback
+  await interviewInfo.save()
+
+  res.json({ message: 'Candidate interview information updated', interviewInfo })
+}
+
+const listOwnVacancies = async (req, res) => {
+  const vacancies = await CompanyVacancy.find({ companyAdminId: req.companyAdmin._id })
+    .sort({ updatedAt: -1 })
+    .lean()
+
+  res.json({ vacancies })
+}
+
+const createOwnVacancy = async (req, res) => {
+  const payload = normalizeVacancyPayload(req.body, req.companyAdmin.companyName)
+  const vacancy = await CompanyVacancy.create({ ...payload, companyAdminId: req.companyAdmin._id })
+
+  res.status(201).json({ message: 'Vacancy information saved', vacancy })
+}
+
+const updateOwnVacancy = async (req, res) => {
+  const vacancy = await CompanyVacancy.findOne({ _id: req.params.id, companyAdminId: req.companyAdmin._id })
+  if (!vacancy) return res.status(404).json({ message: 'Vacancy information not found' })
+
+  vacancy.set(normalizeVacancyPayload(req.body, req.companyAdmin.companyName))
+  await vacancy.save()
+
+  res.json({ message: 'Vacancy information updated', vacancy })
+}
+
 const summary = async (_req, res) => {
-  const [totalAdmins, activeAdmins, submittedInterviewInfo] = await Promise.all([
+  const [totalAdmins, activeAdmins, submittedInterviewInfo, submittedVacancies] = await Promise.all([
     CompanyAdmin.countDocuments(),
     CompanyAdmin.countDocuments({ isActive: true }),
-    CompanyInterviewInfo.countDocuments()
+    CompanyInterviewInfo.countDocuments(),
+    CompanyVacancy.countDocuments()
   ])
 
-  res.json({ totalAdmins, activeAdmins, submittedInterviewInfo })
+  res.json({ totalAdmins, activeAdmins, submittedInterviewInfo, submittedVacancies })
 }
 
 const listAdmins = async (_req, res) => {
@@ -244,7 +488,15 @@ const listAdmins = async (_req, res) => {
     CompanyAdmin.find().sort({ createdAt: -1 }).lean(),
     CompanyInterviewInfo.find().select('companyAdminId updatedAt').lean()
   ])
-  const infoByAdmin = new Map(interviewInfo.map((item) => [String(item.companyAdminId), item]))
+  const infoByAdmin = new Map()
+  interviewInfo.forEach((item) => {
+    const key = String(item.companyAdminId)
+    const current = infoByAdmin.get(key)
+    infoByAdmin.set(key, {
+      count: Number(current?.count || 0) + 1,
+      updatedAt: !current?.updatedAt || new Date(item.updatedAt) > new Date(current.updatedAt) ? item.updatedAt : current.updatedAt
+    })
+  })
 
   res.json({
     admins: admins.map((admin) => {
@@ -253,6 +505,7 @@ const listAdmins = async (_req, res) => {
       return {
         ...safeAdmin,
         hasInterviewInfo: Boolean(info),
+        interviewInfoCount: info?.count || 0,
         interviewInfoUpdatedAt: info?.updatedAt
       }
     })
@@ -261,10 +514,9 @@ const listAdmins = async (_req, res) => {
 
 const createAdmin = async (req, res) => {
   const payload = normalizeCompanyAdminPayload(req.body)
-  const existing = await CompanyAdmin.findOne({ email: payload.email }).select('_id')
-  if (existing) return res.status(409).json({ message: 'A company admin with this email already exists' })
+  await ensureLoginIdentityAvailable({ email: payload.email })
 
-  payload.password = await bcrypt.hash(payload.password, 10)
+  payload.password = await bcrypt.hash(payload.password, 12)
   const companyAdmin = await CompanyAdmin.create(payload)
   res.status(201).json({ companyAdmin })
 }
@@ -276,8 +528,7 @@ const updateAdmin = async (req, res) => {
   if (!companyAdmin) return res.status(404).json({ message: 'Company admin not found' })
 
   if (payload.email && payload.email !== companyAdmin.email) {
-    const existing = await CompanyAdmin.findOne({ email: payload.email, _id: { $ne: companyAdmin._id } }).select('_id')
-    if (existing) return res.status(409).json({ message: 'A company admin with this email already exists' })
+    await ensureLoginIdentityAvailable({ email: payload.email }, { exclude: { companyAdmin: companyAdmin._id } })
   }
 
   const shouldRevokeSessions = payload.email !== undefined || payload.isActive !== undefined
@@ -292,7 +543,7 @@ const resetAdminPassword = async (req, res) => {
   const companyAdmin = await CompanyAdmin.findById(req.params.id).select('+password')
   if (!companyAdmin) return res.status(404).json({ message: 'Company admin not found' })
 
-  companyAdmin.password = await bcrypt.hash(newPassword, 10)
+  companyAdmin.password = await bcrypt.hash(newPassword, 12)
   companyAdmin.tokenVersion = Number(companyAdmin.tokenVersion || 0) + 1
   await companyAdmin.save()
   res.json({ message: 'Company admin password reset successfully' })
@@ -314,26 +565,62 @@ const deleteAdmin = async (req, res) => {
 }
 
 const listInterviewInfo = async (_req, res) => {
-  const interviewInfo = await CompanyInterviewInfo.find()
-    .populate('companyAdminId', 'name companyName email mobileNo isActive')
+  await dropLegacyCompanyInterviewUniqueIndex()
+  const interviewInfo = await populateInterviewInfo(CompanyInterviewInfo.find())
     .sort({ updatedAt: -1 })
     .lean()
 
   res.json({ interviewInfo })
 }
 
+const listVacancies = async (_req, res) => {
+  const vacancies = await CompanyVacancy.find()
+    .populate('companyAdminId', 'name companyName email mobileNo isActive')
+    .sort({ updatedAt: -1 })
+    .lean()
+
+  res.json({ vacancies })
+}
+
+const updateInterviewPlacementFeedback = async (req, res) => {
+  const feedbackFromPlacement = normalizeChoice(
+    requestBody(req.body).feedbackFromPlacement,
+    'Feedback from placement',
+    ['Yes', 'No', 'Pending']
+  ) || 'Pending'
+
+  const interviewInfo = await CompanyInterviewInfo.findById(req.params.id)
+  if (!interviewInfo) return res.status(404).json({ message: 'Candidate interview information not found' })
+
+  interviewInfo.candidateInterview = {
+    ...(interviewInfo.candidateInterview?.toObject?.() || interviewInfo.candidateInterview || {}),
+    feedbackFromPlacement
+  }
+  await interviewInfo.save()
+
+  const populated = await populateInterviewInfo(CompanyInterviewInfo.findById(interviewInfo._id)).lean()
+  res.json({ message: 'Placement feedback updated', interviewInfo: populated })
+}
+
 module.exports = {
   createAdmin,
+  createOwnInterviewInfo,
+  createOwnVacancy,
   dashboard,
   deleteAdmin,
   getOwnInterviewInfo,
+  listOwnVacancies,
   listAdmins,
   listInterviewInfo,
+  listVacancies,
   login,
   logout,
   me,
   resetAdminPassword,
   saveOwnInterviewInfo,
   summary,
-  updateAdmin
+  updateAdmin,
+  updateInterviewPlacementFeedback,
+  updateOwnInterviewInfo,
+  updateOwnVacancy
 }

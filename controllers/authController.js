@@ -8,6 +8,7 @@ const {
   clearAuthCookieOptions,
   tokenFromRequest
 } = require('../utils/authCookie')
+const { ensureLoginIdentityAvailable } = require('../utils/loginIdentity')
 
 const PASSWORD_MAX_LENGTH = 72
 const DUMMY_PASSWORD_HASH = '$2b$10$851oawsmsIi4AYoa79T2s.GGVhGw453ExsWo29K/gbtBQ.FD8VGk.'
@@ -148,7 +149,7 @@ const logout = async (req, res) => {
       if (decoded?.id) {
         await User.updateOne({ _id: decoded.id }, { $inc: { tokenVersion: 1 } })
       }
-    } catch (_error) {
+    } catch {
       // Clearing the cookie is still the correct response for malformed or expired logout tokens.
     }
   }
@@ -220,9 +221,8 @@ const updateSuperAdminProfile = async (req, res) => {
       return res.status(400).json({ message: 'Email is required' })
     }
 
-    const existing = await User.findOne({ email: normalized, _id: { $ne: user._id } })
-    if (existing) {
-      return res.status(409).json({ message: 'A user with this email already exists' })
+    if (normalized !== user.email) {
+      await ensureLoginIdentityAvailable({ email: normalized }, { exclude: { user: user._id } })
     }
 
     user.email = normalized
@@ -271,7 +271,7 @@ const updateSuperAdminPassword = async (req, res) => {
     return res.status(400).json({ message: 'New password must be different from current password' })
   }
 
-  user.password = await bcrypt.hash(newPassword, 10)
+  user.password = await bcrypt.hash(newPassword, 12)
   user.tokenVersion = Number(user.tokenVersion || 0) + 1
   await user.save()
 

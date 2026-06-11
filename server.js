@@ -6,6 +6,7 @@ const http = require('http')
 const path = require('path')
 const compression = require('compression')
 const cors = require('cors')
+const helmet = require('helmet')
 const rateLimit = require('express-rate-limit')
 const connectDB = require('./config/db')
 const { corsOrigin } = require('./config/corsOptions')
@@ -20,7 +21,7 @@ const placementRoutes = require('./routes/placementRoutes')
 const cmsRoutes = require('./routes/cms/cmsRoutes')
 const publicRoutes = require('./routes/publicRoutes')
 const { verifyToken } = require('./middleware/authMiddleware')
-const { requireRole, requireRoleOrManagerAccess } = require('./middleware/roleMiddleware')
+const { requireRoleOrManagerAccess } = require('./middleware/roleMiddleware')
 const { cleanupTempUploads } = require('./middleware/uploadMiddleware')
 const { checkCrmRole, verifyCrmToken } = require('./crm/middleware/crm.auth.middleware')
 const { redis } = require('./src/config/redis')
@@ -33,6 +34,7 @@ const PRODUCTION_SECRET_ENV = [
   'CRM_JWT_SECRET',
   'EMS_JWT_SECRET',
   'EMS_REFRESH_SECRET',
+  'COMPANY_ADMIN_JWT_SECRET',
   'BACKUP_JWT_SECRET',
   'BACKUP_DOWNLOAD_SECRET'
 ]
@@ -64,7 +66,11 @@ const validateEnvironment = () => {
 const hasBlockedObjectKey = (value, depth = 0) => {
   if (!value || typeof value !== 'object' || depth > 25) return false
 
-  return Object.entries(value).some(([key, item]) => BLOCKED_OBJECT_KEYS.has(key) || hasBlockedObjectKey(item, depth + 1))
+  return Object.entries(value).some(([key, item]) => (
+    BLOCKED_OBJECT_KEYS.has(key) ||
+    String(key).startsWith('$') ||
+    hasBlockedObjectKey(item, depth + 1)
+  ))
 }
 
 const candidateDuplicateMessage = (message) => {
@@ -117,6 +123,13 @@ app.set(
   process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : process.env.NODE_ENV === 'production' ? 1 : false
 )
 
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: false
+  })
+)
+
 const listen = (port) =>
   new Promise((resolve, reject) => {
     server.once('error', reject)
@@ -166,6 +179,9 @@ app.use((req, res, next) => {
 })
 app.use('/api', apiLimiter)
 app.use('/crm', crmApiLimiter)
+app.get('/health', healthLimiter, (_req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime() })
+})
 app.get('/api/health', healthLimiter, (_req, res) => {
   res.json({ ok: true })
 })
@@ -288,11 +304,10 @@ const start = async () => {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const port = basePort + attempt
     try {
-      // eslint-disable-next-line no-await-in-loop
       await listen(port)
-      console.log(`Server running on port ${port}`)
+      console.warn(`Server running on port ${port}`)
       if (attempt > 0) {
-        console.log(`PORT not set; fell back from ${basePort} to ${port}`)
+        console.warn(`PORT not set; fell back from ${basePort} to ${port}`)
       }
       return
     } catch (error) {
@@ -318,6 +333,7 @@ if (require.main === module) {
 
   process.on('unhandledRejection', (reason) => {
     console.error('Unhandled Rejection:', reason)
+    process.exit(1)
   })
 
   process.on('uncaughtException', (error) => {

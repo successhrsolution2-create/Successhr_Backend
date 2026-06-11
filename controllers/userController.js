@@ -8,6 +8,7 @@ const Placement = require('../models/Placement')
 const CmsCandidate = require('../models/cms/CmsCandidate')
 const { invalidateCache } = require('../src/utils/invalidateCache')
 const generateAdvisorCode = require('../utils/generateAdvisorCode')
+const { ensureLoginIdentityAvailable } = require('../utils/loginIdentity')
 
 const isText = (value) => typeof value === 'string'
 const trimmedText = (value) => (isText(value) ? value.trim() : '')
@@ -95,13 +96,9 @@ const createManager = async (req, res) => {
 
   const normalizedName = trimmedText(name)
   const normalizedEmail = trimmedText(email).toLowerCase()
-  const exists = await User.findOne({ email: normalizedEmail })
+  await ensureLoginIdentityAvailable({ email: normalizedEmail })
 
-  if (exists) {
-    return res.status(409).json({ message: 'A user with this email already exists' })
-  }
-
-  const hashed = await bcrypt.hash(password, 10)
+  const hashed = await bcrypt.hash(password, 12)
   const manager = await User.create({
     name: normalizedName,
     email: normalizedEmail,
@@ -131,12 +128,7 @@ const updateManager = async (req, res) => {
 
   const normalizedEmail = email !== undefined ? trimmedText(email).toLowerCase() : undefined
   if (normalizedEmail && normalizedEmail !== manager.email) {
-    const exists = await User.findOne({ email: normalizedEmail, _id: { $ne: manager._id } })
-
-    if (exists) {
-      return res.status(409).json({ message: 'A user with this email already exists' })
-    }
-
+    await ensureLoginIdentityAvailable({ email: normalizedEmail }, { exclude: { user: manager._id } })
     manager.email = normalizedEmail
   }
 
@@ -172,7 +164,7 @@ const resetManagerPassword = async (req, res) => {
     return res.status(404).json({ message: 'Manager not found' })
   }
 
-  manager.password = await bcrypt.hash(newPassword, 10)
+  manager.password = await bcrypt.hash(newPassword, 12)
   manager.tokenVersion = Number(manager.tokenVersion || 0) + 1
   await manager.save()
 
@@ -265,13 +257,9 @@ const createBusinessAdvisor = async (req, res) => {
 
   const normalizedName = trimmedText(name)
   const normalizedEmail = trimmedText(email).toLowerCase()
-  const exists = await User.findOne({ email: normalizedEmail })
+  await ensureLoginIdentityAvailable({ email: normalizedEmail })
 
-  if (exists) {
-    return res.status(409).json({ message: 'A user with this email already exists' })
-  }
-
-  const hashed = await bcrypt.hash(password, 10)
+  const hashed = await bcrypt.hash(password, 12)
   const user = await User.create({
     name: normalizedName,
     email: normalizedEmail,
@@ -334,12 +322,7 @@ const updateBusinessAdvisorUser = async (req, res) => {
 
   const normalizedEmail = email !== undefined ? trimmedText(email).toLowerCase() : undefined
   if (normalizedEmail && normalizedEmail !== user.email) {
-    const exists = await User.findOne({ email: normalizedEmail, _id: { $ne: user._id } })
-
-    if (exists) {
-      return res.status(409).json({ message: 'A user with this email already exists' })
-    }
-
+    await ensureLoginIdentityAvailable({ email: normalizedEmail }, { exclude: { user: user._id } })
     user.email = normalizedEmail
   }
 
@@ -377,7 +360,7 @@ const resetBusinessAdvisorPassword = async (req, res) => {
     return res.status(404).json({ message: 'Business Advisor not found' })
   }
 
-  user.password = await bcrypt.hash(newPassword, 10)
+  user.password = await bcrypt.hash(newPassword, 12)
   user.tokenVersion = Number(user.tokenVersion || 0) + 1
   await user.save()
 

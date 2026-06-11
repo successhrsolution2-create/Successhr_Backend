@@ -8,7 +8,7 @@ async function seed() {
   const exists = await User.findOne({ role: 'superAdmin' })
 
   if (exists) {
-    console.log('Super admin already exists')
+    console.warn('Super admin already exists')
     process.exit()
   }
 
@@ -23,7 +23,7 @@ async function seed() {
     throw new Error('SEED_SUPER_ADMIN_PASSWORD must be at least 10 characters')
   }
 
-  const hashed = await bcrypt.hash(password, 10)
+  const hashed = await bcrypt.hash(password, 12)
 
   await User.create({
     name: 'Super Admin',
@@ -32,7 +32,7 @@ async function seed() {
     role: 'superAdmin'
   })
 
-  console.log(`Super admin created: ${email}`)
+  console.warn(`Super admin created: ${email}`)
   process.exit()
 }
 

@@ -10,13 +10,17 @@ const normalizeOrigin = (origin) => {
 
   try {
     return new URL(origin).origin
-  } catch (_error) {
+  } catch {
     return String(origin).trim().replace(/\/+$/, '')
   }
 }
 
 const configuredOrigins = new Set(
-  [...defaultClientUrls, ...(process.env.CLIENT_URL || '').split(',')]
+  [
+    ...defaultClientUrls,
+    ...(process.env.CLIENT_URL || '').split(','),
+    ...(process.env.ALLOWED_ORIGIN || '').split(',')
+  ]
     .map((origin) => normalizeOrigin(origin))
     .filter(Boolean)
 )
@@ -39,7 +43,7 @@ const isAllowedOrigin = (origin) => {
   const hostname = (() => {
     try {
       return new URL(normalizedOrigin).hostname.toLowerCase()
-    } catch (_error) {
+    } catch {
       return ''
     }
   })()

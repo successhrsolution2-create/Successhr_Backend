@@ -2,6 +2,7 @@ const mongoose = require('mongoose')
 const CrmUser = require('../models/CrmUser.model')
 const CrmCandidate = require('../models/CrmCandidate.model')
 const CrmCallLog = require('../models/CrmCallLog.model')
+const { ensureLoginIdentityAvailable } = require('../../utils/loginIdentity')
 
 const { CANDIDATE_CLASSES, CALL_STATUSES, INTERESTED_STATUSES, REGISTRATION_INFO } = CrmCandidate
 
@@ -199,9 +200,12 @@ const csvRow = (values) => `${values.map(csvCell).join(',')}\n`
 
 const createEmployee = async (req, res) => {
   try {
+    await ensureLoginIdentityAvailable({ email: req.body.email, employeeId: req.body.employeeId })
+
     const employee = await CrmUser.create({
       name: req.body.name,
       email: req.body.email,
+      employeeId: req.body.employeeId,
       password: req.body.password,
       role: 'crm_employee',
       createdBy: req.user?._id || null
@@ -296,16 +300,13 @@ const updateEmployee = async (req, res) => {
     }
 
     if (req.body.email) {
-      const duplicateEmail = await CrmUser.exists({
-        _id: { $ne: employee._id },
-        email: req.body.email
-      })
-
-      if (duplicateEmail) {
-        throw createHttpError(409, 'CRM employee email already exists')
-      }
-
+      await ensureLoginIdentityAvailable({ email: req.body.email }, { exclude: { crmUser: employee._id } })
       employee.email = req.body.email
+    }
+
+    if (req.body.employeeId !== undefined) {
+      await ensureLoginIdentityAvailable({ employeeId: req.body.employeeId }, { exclude: { crmUser: employee._id } })
+      employee.employeeId = req.body.employeeId
     }
 
     if (req.body.name) employee.name = req.body.name

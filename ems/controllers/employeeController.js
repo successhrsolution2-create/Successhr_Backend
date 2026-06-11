@@ -14,6 +14,7 @@ const { MANAGER_ACCESS_MODULES } = require('../../models/User')
 const { canAccessEmployee } = require('../middleware/emsRBAC')
 const { EMS_ROLES } = require('../config/emsConstants')
 const { normalizeEmployeePayload } = require('../validations/employeeValidation')
+const { ensureLoginIdentityAvailable } = require('../../utils/loginIdentity')
 const {
   buildSearch,
   getNextEmployeeId,
@@ -233,7 +234,7 @@ const syncAppUserLogin = async (employee, rawPassword) => {
       name: employeeFullName(employee),
       email: employee.email,
       employeeId: employee.employeeId,
-      password: await bcrypt.hash(rawPassword, 10),
+      password: await bcrypt.hash(rawPassword, 12),
       role: appRole,
       isActive: employee.status === 'active',
       managerAccess: appRole === 'manager' ? MANAGER_ACCESS_MODULES : []
@@ -246,7 +247,7 @@ const syncAppUserLogin = async (employee, rawPassword) => {
     appUser.isActive = employee.status === 'active'
     appUser.managerAccess = appRole === 'manager' ? MANAGER_ACCESS_MODULES : []
     if (rawPassword) {
-      appUser.password = await bcrypt.hash(rawPassword, 10)
+      appUser.password = await bcrypt.hash(rawPassword, 12)
       appUser.tokenVersion = Number(appUser.tokenVersion || 0) + 1
     }
   }
@@ -458,6 +459,7 @@ const createEmployee = async (req, res) => {
     email: payload.email,
     updatedBy: req.emsUser?.id
   })
+  await ensureLoginIdentityAvailable({ email: payload.email, employeeId: payload.employeeId })
 
   const employee = await Employee.create(payload)
   await syncCrmEmployeeLogin(employee, payload.password)
@@ -510,6 +512,8 @@ const updateEmployee = async (req, res) => {
   const wasAppLoginRole = APP_LOGIN_ROLES.includes(employee.role)
   const rawPassword = payload.password
   const nextRole = payload.role || employee.role
+  const nextEmail = payload.email || employee.email
+  const nextEmployeeId = payload.employeeId || employee.employeeId
 
   if (nextRole === 'crm_employee' && rawPassword && rawPassword.length < 8) {
     return res.status(400).json({ message: 'CRM Employee password must be at least 8 characters' })
@@ -526,6 +530,22 @@ const updateEmployee = async (req, res) => {
     if (!existingAppUser) {
       return res.status(400).json({ message: 'Temporary password is required when changing to this login role' })
     }
+  }
+
+  if (
+    (payload.email && payload.email !== employee.email) ||
+    (payload.employeeId && payload.employeeId !== employee.employeeId)
+  ) {
+    await ensureLoginIdentityAvailable(
+      { email: nextEmail, employeeId: nextEmployeeId },
+      {
+        exclude: {
+          employee: employee._id,
+          user: employee.appUserId,
+          crmUser: employee.crmUserId
+        }
+      }
+    )
   }
 
   Object.entries(payload).forEach(([key, value]) => {
@@ -656,6 +676,7 @@ const bulkImportEmployees = async (req, res) => {
     try {
       payload.employeeId = payload.employeeId || (await getNextEmployeeId())
       payload.createdBy = req.emsUser?.id || null
+      await ensureLoginIdentityAvailable({ email: payload.email, employeeId: payload.employeeId })
       const employee = await Employee.create(payload)
       created.push(employee)
     } catch (error) {

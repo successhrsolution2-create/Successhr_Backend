@@ -118,7 +118,7 @@ const updateLinkedLoginPasswords = async (employee, newPassword) => {
       User.updateOne(
         { _id: employee.appUserId },
         {
-          $set: { password: await bcrypt.hash(newPassword, 10) },
+          $set: { password: await bcrypt.hash(newPassword, 12) },
           $inc: { tokenVersion: 1 }
         }
       )
@@ -261,7 +261,7 @@ const refreshToken = async (req, res) => {
     }
 
     return authResponse(res, employee)
-  } catch (_error) {
+  } catch {
     return res.status(401).json({ message: 'Invalid or expired EMS refresh token' })
   }
 }
