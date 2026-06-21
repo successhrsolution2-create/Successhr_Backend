@@ -164,7 +164,13 @@ const corsOptions = {
   origin: corsOrigin,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Authorization', 'Content-Type', 'X-Requested-With', 'X-EMS-Refresh-Token'],
+  allowedHeaders: [
+    'Authorization',
+    'Content-Type',
+    'X-Requested-With',
+    'X-EMS-Refresh-Token',
+    'X-Director-Assessment-Approval'
+  ],
   optionsSuccessStatus: 204
 }
 
