@@ -104,6 +104,18 @@ const parseApplicationDetails = (value) => {
   }
 }
 
+const parseStructuredField = (value) => {
+  if (!value) return {}
+  if (typeof value === 'object') return value
+
+  try {
+    const parsed = JSON.parse(String(value))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch (_error) {
+    return {}
+  }
+}
+
 const remarkKeys = [
   'documentsSubmitted',
   'offerLetterReceived',
@@ -135,6 +147,10 @@ const defaultCheckboxes = () =>
 
 const normalizeApplicationPayload = (body) => {
   const payload = { ...body }
+
+  payload.formMeta = parseStructuredField(payload.formMeta)
+  payload.familyDetails = parseStructuredField(payload.familyDetails)
+  payload.placementReference = parseStructuredField(payload.placementReference)
 
   payload.formMeta = {
     day: text(payload.formMeta?.day),

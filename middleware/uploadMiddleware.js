@@ -50,7 +50,11 @@ const imageUpload = createUpload(imageTypes, 'Only JPG and PNG image files are a
 const candidateDocumentUpload = createUpload(
   [...allowedTypes, ...videoTypes],
   'Only JPG, PNG, PDF, MP4, MOV, and WebM files are allowed',
-  { files: 40 }
+  {
+    files: 40,
+    fields: 200,
+    parts: 260
+  }
 )
 
 const spreadsheetUpload = multer({
