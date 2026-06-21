@@ -6,6 +6,13 @@ const User = require('../models/User')
 const normalizeEmail = (email) => String(email || '').trim().toLowerCase()
 const normalizeEmployeeId = (employeeId) => String(employeeId || '').trim().toUpperCase()
 const sameId = (left, right) => String(left || '') === String(right || '')
+const isExcludedId = (recordId, excluded) => {
+  if (Array.isArray(excluded)) {
+    return excluded.some((item) => sameId(recordId, item))
+  }
+
+  return sameId(recordId, excluded)
+}
 
 const accountLabels = {
   companyAdmin: 'Company Admin',
@@ -46,7 +53,7 @@ const findLoginIdentityConflicts = async ({ email, employeeId, exclude = {} } = 
   const results = await Promise.all(queries)
   results.forEach(({ source, field, record }) => {
     if (!record) return
-    if (exclude[source] && sameId(record._id, exclude[source])) return
+    if (exclude[source] && isExcludedId(record._id, exclude[source])) return
     conflicts.push({
       source,
       field,

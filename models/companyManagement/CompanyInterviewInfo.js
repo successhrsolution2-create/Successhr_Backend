@@ -28,8 +28,7 @@ const companyInterviewInfoSchema = new mongoose.Schema(
       resume: fileSchema,
       candidateName: {
         type: String,
-        trim: true,
-        required: true
+        trim: true
       },
       gender: {
         type: String,

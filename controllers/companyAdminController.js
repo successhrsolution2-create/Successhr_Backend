@@ -136,7 +136,7 @@ const normalizeCompanyAdminPayload = (rawBody, { partial = false } = {}) => {
   return payload
 }
 
-const normalizeInterviewInfoPayload = (rawBody, defaultCompanyName, { allowPlacementFeedback = false } = {}) => {
+const normalizeInterviewInfoPayload = (rawBody, defaultCompanyName, { allowPlacementFeedback = false, requireCandidateName = true } = {}) => {
   const body = requestBody(rawBody)
   const job = nestedObject(body.jobRequirements)
   const about = nestedObject(body.aboutCompany)
@@ -155,7 +155,9 @@ const normalizeInterviewInfoPayload = (rawBody, defaultCompanyName, { allowPlace
     mobileNo: normalizeMobile(body.mobileNo),
     emailId: normalizeEmail(body.emailId, 'Email'),
     candidateInterview: {
-      candidateName: requiredText(source.candidateName, 'Candidate name', 180),
+      candidateName: requireCandidateName
+        ? requiredText(source.candidateName, 'Candidate name', 180)
+        : optionalText(source.candidateName, 'Candidate name', 180),
       gender: normalizeChoice(source.gender, 'Gender', ['Male', 'Female', 'Other']),
       education: optionalText(source.education || source.candidateEducation, 'Education', 180),
       department: optionalText(source.candidateDepartment || source.department, 'Department', 180),
@@ -408,7 +410,7 @@ const saveOwnInterviewInfo = async (req, res) => {
   await dropLegacyCompanyInterviewUniqueIndex()
   const existing = await CompanyInterviewInfo.findOne({ companyAdminId: req.companyAdmin._id }).sort({ updatedAt: -1 })
   const payload = await attachInterviewFiles(
-    normalizeInterviewInfoPayload(req.body, req.companyAdmin.companyName),
+    normalizeInterviewInfoPayload(req.body, req.companyAdmin.companyName, { requireCandidateName: false }),
     req.files,
     existing
   )

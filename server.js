@@ -4,6 +4,7 @@ require('express-async-errors')
 const express = require('express')
 const http = require('http')
 const path = require('path')
+const mongoose = require('mongoose')
 const compression = require('compression')
 const cors = require('cors')
 const helmet = require('helmet')
@@ -83,6 +84,8 @@ const candidateDuplicateMessage = (message) => {
 
 const app = express()
 const server = http.createServer(app)
+let serverStarted = false
+let isShuttingDown = false
 
 validateEnvironment()
 
@@ -135,6 +138,7 @@ const listen = (port) =>
     server.once('error', reject)
     server.listen(port, () => {
       server.off('error', reject)
+      serverStarted = true
       resolve()
     })
   })
@@ -325,10 +329,66 @@ const start = async () => {
   }
 }
 
+const closeServer = () =>
+  new Promise((resolve) => {
+    if (!serverStarted) {
+      resolve()
+      return
+    }
+
+    server.close((error) => {
+      if (error) console.error(error)
+      resolve()
+    })
+  })
+
+const closeSocket = () =>
+  new Promise((resolve) => {
+    const io = app.get('io')
+    if (!io) {
+      resolve()
+      return
+    }
+
+    io.close(() => resolve())
+  })
+
+const gracefulShutdown = async (signal) => {
+  if (isShuttingDown) return
+  isShuttingDown = true
+
+  console.warn(`Received ${signal}; shutting down gracefully`)
+  const forcedExit = setTimeout(() => {
+    console.error('Graceful shutdown timed out')
+    process.exit(1)
+  }, 10000)
+  forcedExit.unref()
+
+  try {
+    await closeSocket()
+    await closeServer()
+    await mongoose.connection.close(false)
+    clearTimeout(forcedExit)
+    process.exit(0)
+  } catch (error) {
+    clearTimeout(forcedExit)
+    console.error(error)
+    process.exit(1)
+  }
+}
+
 if (require.main === module) {
   start().catch((error) => {
     console.error(error)
     process.exit(1)
+  })
+
+  process.on('SIGTERM', () => {
+    gracefulShutdown('SIGTERM')
+  })
+
+  process.on('SIGINT', () => {
+    gracefulShutdown('SIGINT')
   })
 
   process.on('unhandledRejection', (reason) => {
@@ -342,4 +402,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { app, server, start, validateEnvironment }
+module.exports = { app, server, start, validateEnvironment, gracefulShutdown }

@@ -96,6 +96,19 @@ const releaseDeletedEmployeeUniqueFields = async ({ employeeId, email, updatedBy
   }
 }
 
+const addExcludedId = (exclude, source, id) => {
+  if (!id) return
+  const current = exclude[source]
+  if (!current) {
+    exclude[source] = [id]
+    return
+  }
+
+  if (!current.some((item) => String(item) === String(id))) {
+    current.push(id)
+  }
+}
+
 const canReuseInactiveAppUser = async (user) => {
   if (!user || user.isActive !== false) return false
   const activeEmployee = await Employee.exists({ appUserId: user._id, isDeleted: false })
@@ -106,6 +119,39 @@ const canReuseInactiveCrmUser = async (user) => {
   if (!user || user.isActive !== false) return false
   const activeEmployee = await Employee.exists({ crmUserId: user._id, isDeleted: false })
   return !activeEmployee
+}
+
+const reusableLoginIdentityExclusions = async (employee) => {
+  const exclude = {}
+  if (!employee) return exclude
+
+  if (employee.role === 'crm_employee') {
+    const reusableCrmUsers = await Promise.all([
+      employee.email ? CrmUser.findOne({ email: employee.email }).select('_id isActive') : null,
+      employee.employeeId ? CrmUser.findOne({ employeeId: employee.employeeId }).select('_id isActive') : null
+    ])
+
+    for (const crmUser of reusableCrmUsers) {
+      if (await canReuseInactiveCrmUser(crmUser)) {
+        addExcludedId(exclude, 'crmUser', crmUser._id)
+      }
+    }
+  }
+
+  if (APP_LOGIN_ROLES.includes(employee.role)) {
+    const reusableAppUsers = await Promise.all([
+      employee.email ? User.findOne({ email: employee.email }).select('_id isActive') : null,
+      employee.employeeId ? User.findOne({ employeeId: employee.employeeId }).select('_id isActive') : null
+    ])
+
+    for (const user of reusableAppUsers) {
+      if (await canReuseInactiveAppUser(user)) {
+        addExcludedId(exclude, 'user', user._id)
+      }
+    }
+  }
+
+  return exclude
 }
 
 const syncCrmEmployeeLogin = async (employee, rawPassword) => {
@@ -459,7 +505,10 @@ const createEmployee = async (req, res) => {
     email: payload.email,
     updatedBy: req.emsUser?.id
   })
-  await ensureLoginIdentityAvailable({ email: payload.email, employeeId: payload.employeeId })
+  await ensureLoginIdentityAvailable(
+    { email: payload.email, employeeId: payload.employeeId },
+    { exclude: await reusableLoginIdentityExclusions(payload) }
+  )
 
   const employee = await Employee.create(payload)
   await syncCrmEmployeeLogin(employee, payload.password)
@@ -676,7 +725,10 @@ const bulkImportEmployees = async (req, res) => {
     try {
       payload.employeeId = payload.employeeId || (await getNextEmployeeId())
       payload.createdBy = req.emsUser?.id || null
-      await ensureLoginIdentityAvailable({ email: payload.email, employeeId: payload.employeeId })
+      await ensureLoginIdentityAvailable(
+        { email: payload.email, employeeId: payload.employeeId },
+        { exclude: await reusableLoginIdentityExclusions(payload) }
+      )
       const employee = await Employee.create(payload)
       created.push(employee)
     } catch (error) {

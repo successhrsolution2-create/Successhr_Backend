@@ -1,4 +1,5 @@
 const mongoose = require('mongoose')
+const dns = require('dns')
 
 const getMongoTarget = (uri) => {
   try {
@@ -8,6 +9,49 @@ const getMongoTarget = (uri) => {
   } catch (_error) {
     return { host: 'unknown', dbName: 'unknown' }
   }
+}
+
+const withDefaultMongoPort = (host) => {
+  const trimmed = String(host || '').trim()
+  if (!trimmed || trimmed.includes(':')) return trimmed
+  return `${trimmed}:27017`
+}
+
+const buildSrvFallbackUri = (uri) => {
+  const hosts = String(process.env.MONGODB_SRV_FALLBACK_HOSTS || '')
+    .split(',')
+    .map(withDefaultMongoPort)
+    .filter(Boolean)
+    .join(',')
+
+  if (!hosts) return null
+
+  const parsed = new URL(uri)
+  if (parsed.protocol !== 'mongodb+srv:') return null
+
+  const auth = parsed.username
+    ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
+    : ''
+  const params = new URLSearchParams(parsed.search)
+  const fallbackParams = new URLSearchParams(process.env.MONGODB_SRV_FALLBACK_OPTIONS || '')
+
+  fallbackParams.forEach((value, key) => {
+    params.set(key, value)
+  })
+
+  if (!params.has('tls') && !params.has('ssl')) {
+    params.set('tls', 'true')
+  }
+
+  return `mongodb://${auth}${hosts}${parsed.pathname}?${params.toString()}`
+}
+
+const connectionHint = (error) => {
+  const message = error?.message || 'Unknown MongoDB connection error'
+  if (/Could not connect to any servers in your MongoDB Atlas cluster/i.test(message)) {
+    return `${message} Check Atlas Network Access for your current IP and confirm outbound TCP 27017 is allowed.`
+  }
+  return message
 }
 
 const connectDB = async () => {
@@ -39,7 +83,37 @@ const connectDB = async () => {
 
   console.log(`MongoDB target: ${target.host}/${target.dbName}`)
 
-  const conn = await mongoose.connect(uri, connectOptions)
+  let conn
+  try {
+    conn = await mongoose.connect(uri, connectOptions)
+  } catch (error) {
+    if (error?.syscall !== 'querySrv') {
+      throw error
+    }
+
+    const dnsServers = dns.getServers().join(', ') || 'none'
+    const fallbackUri = buildSrvFallbackUri(uri)
+    if (!fallbackUri) {
+      throw new Error(
+        `MongoDB SRV DNS lookup failed for ${target.host}. Node DNS servers: ${dnsServers}. ` +
+          'Fix local DNS/SRV resolution or configure MONGODB_SRV_FALLBACK_HOSTS with the Atlas standard seedlist hosts.',
+        { cause: error }
+      )
+    }
+
+    console.warn(
+      `MongoDB SRV DNS lookup failed for ${target.host}; Node DNS servers: ${dnsServers}. Trying configured standard seedlist fallback.`
+    )
+
+    try {
+      conn = await mongoose.connect(fallbackUri, connectOptions)
+    } catch (fallbackError) {
+      throw new Error(`MongoDB standard seedlist fallback failed. ${connectionHint(fallbackError)}`, {
+        cause: fallbackError
+      })
+    }
+  }
+
   console.log(`MongoDB connected: ${conn.connection.host}`)
   return conn.connection
 }

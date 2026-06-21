@@ -3,8 +3,8 @@ module.exports = {
     {
       name: 'super-admin-api',
       script: 'server.js',
-      instances: 2,
-      exec_mode: 'cluster',
+      instances: 1,
+      exec_mode: 'fork',
       node_args: '--max-old-space-size=400',
       max_memory_restart: '400M',
       watch: false,
