@@ -1,3 +1,5 @@
+require('dotenv').config()
+
 const serverless = require('serverless-http')
 const { loadParameterStoreEnv } = require('./config/awsParameters')
 const connectDB = require('./config/db')
