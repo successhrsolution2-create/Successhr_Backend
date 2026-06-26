@@ -17,6 +17,23 @@ const withDefaultMongoPort = (host) => {
   return `${trimmed}:27017`
 }
 
+const configureMongoDns = () => {
+  const servers = String(process.env.MONGODB_DNS_SERVERS || '')
+    .split(',')
+    .map((server) => server.trim())
+    .filter(Boolean)
+
+  if (!servers.length) return null
+
+  try {
+    dns.setServers(servers)
+  } catch (error) {
+    throw new Error(`Invalid MONGODB_DNS_SERVERS value. ${error.message}`, { cause: error })
+  }
+
+  return servers
+}
+
 const buildSrvFallbackUri = (uri) => {
   const hosts = String(process.env.MONGODB_SRV_FALLBACK_HOSTS || '')
     .split(',')
@@ -70,6 +87,7 @@ const connectDB = async () => {
     return mongoose.connection
   }
 
+  const configuredDnsServers = configureMongoDns()
   const target = getMongoTarget(uri)
   const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME)
   const connectOptions = {
@@ -82,6 +100,9 @@ const connectDB = async () => {
   }
 
   console.log(`MongoDB target: ${target.host}/${target.dbName}`)
+  if (configuredDnsServers) {
+    console.log(`MongoDB DNS servers: ${configuredDnsServers.join(', ')}`)
+  }
 
   let conn
   try {

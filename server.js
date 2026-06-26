@@ -5,6 +5,7 @@ const express = require('express')
 const http = require('http')
 const path = require('path')
 const mongoose = require('mongoose')
+const jwt = require('jsonwebtoken')
 const compression = require('compression')
 const cors = require('cors')
 const helmet = require('helmet')
@@ -113,7 +114,8 @@ const requireCrmAdminAccess = (req, res, next) => {
   const authHeader = req.headers.authorization || ''
   const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice('Bearer '.length).trim() : null
 
-  if (bearerToken && bearerToken !== 'cookie') {
+  const decodedBearer = bearerToken && bearerToken !== 'cookie' ? jwt.decode(bearerToken) : null
+  if (decodedBearer?.type === 'access' && String(decodedBearer?.role || '').startsWith('crm_')) {
     return verifyCrmToken(req, res, () => checkCrmRole(['crm_super_admin'])(req, res, next))
   }
 
