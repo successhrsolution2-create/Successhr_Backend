@@ -1433,6 +1433,7 @@ const updateCandidate = async (req, res) => {
   Object.entries(req.body || {}).forEach(([key, value]) => {
     if (key !== '_id' && key !== 'createdBy' && key !== 'directorAssessmentApprovalToken') {
       candidate[key] = value
+      candidate.markModified(key)
     }
   })
 

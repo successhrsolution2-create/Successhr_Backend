@@ -149,6 +149,15 @@ const syncCandidateFromCms = async (cmsCandidateOrId) => {
   if (cmsCandidate.documents !== undefined) candidate.documents = copyDocuments(cmsCandidate.documents)
   candidate.selectionStatus = selectionFromCms(cmsCandidate.successRemarks)
   await candidate.save()
+
+  if (candidate._id && !cmsCandidate.sourceCandidateId) {
+    cmsCandidate.sourceCandidateId = candidate._id
+    // Use updateOne to avoid re-triggering save middleware or validation loops
+    await cmsCandidate.constructor.updateOne(
+      { _id: cmsCandidate._id },
+      { $set: { sourceCandidateId: candidate._id } }
+    )
+  }
 }
 
 module.exports = {
