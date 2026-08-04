@@ -10,6 +10,7 @@ const mongoose = require('mongoose')
 const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
 const ExcelJS = require('exceljs')
+const bcrypt = require('bcryptjs')
 const { nextCandidateCode, nextCandidateCodes } = require('../../utils/cmsCandidateCode')
 const { syncCandidateFromCms } = require('../../utils/candidateStatusSync')
 const { uploadToS3, getObjectFromS3 } = require('../../utils/s3Upload')
@@ -449,10 +450,19 @@ const createCandidate = async (req, res) => {
   )
 
   const candidateCode = await nextCandidateCode()
+  
+  const candidatePayload = { ...req.body }
+  let passwordHash = undefined
+  if (candidatePayload.candidatePassword) {
+    passwordHash = await bcrypt.hash(candidatePayload.candidatePassword, 12)
+    delete candidatePayload.candidatePassword
+  }
+
   const candidate = await CmsCandidate.create({
-    ...req.body,
+    ...candidatePayload,
     candidateCode,
-    createdBy: req.user._id
+    createdBy: req.user._id,
+    ...(passwordHash ? { candidatePortal: { passwordHash } } : {})
   })
   await ensureRemark(candidate._id)
   res.status(201).json(candidate)
@@ -1430,8 +1440,16 @@ const updateCandidate = async (req, res) => {
 
   await requireDirectorAssessmentApproval(req, hasDirectorAssessmentChanged(candidate, req.body || {}))
 
+  if (req.body.candidatePassword) {
+    candidate.candidatePortal = {
+      ...(candidate.candidatePortal || {}),
+      passwordHash: await bcrypt.hash(req.body.candidatePassword, 12)
+    }
+    candidate.markModified('candidatePortal')
+  }
+
   Object.entries(req.body || {}).forEach(([key, value]) => {
-    if (key !== '_id' && key !== 'createdBy' && key !== 'directorAssessmentApprovalToken') {
+    if (key !== '_id' && key !== 'createdBy' && key !== 'directorAssessmentApprovalToken' && key !== 'candidatePassword') {
       candidate[key] = value
       candidate.markModified(key)
     }
