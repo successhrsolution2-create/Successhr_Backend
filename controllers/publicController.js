@@ -6,6 +6,7 @@ const BusinessAdvisor = require('../models/BusinessAdvisor')
 const User = require('../models/User')
 const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
+const bcrypt = require('bcryptjs')
 const { nextCandidateCode } = require('../utils/cmsCandidateCode')
 const { invalidateCache } = require('../src/utils/invalidateCache')
 const { uploadToS3 } = require('../utils/s3Upload')
@@ -20,6 +21,8 @@ const {
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const pdfSharePurpose = 'success-remark-pdf'
+const candidatePortalPurpose = 'candidate-portal'
+const candidatePortalTokenMaxAge = '30d'
 const hashPdfShareCode = (code) => crypto.createHash('sha256').update(String(code || '')).digest('hex')
 const toDigits = (value) => String(value || '').replace(/\D/g, '')
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
@@ -102,6 +105,63 @@ const parseApplicationDetails = (value) => {
   } catch (_error) {
     return {}
   }
+}
+
+const normalizePublicApplyState = (value) => {
+  const parsed = parseApplicationDetails(value)
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+}
+
+const validateCandidatePassword = (password, confirmPassword) => {
+  const nextPassword = String(password || '')
+  const nextConfirmPassword = String(confirmPassword || '')
+
+  if (nextPassword.length < 6) {
+    const error = new Error('Password must be at least 6 characters')
+    error.statusCode = 400
+    throw error
+  }
+
+  if (nextPassword.length > 72) {
+    const error = new Error('Password must be 72 characters or less')
+    error.statusCode = 400
+    throw error
+  }
+
+  if (nextPassword !== nextConfirmPassword) {
+    const error = new Error('Password and confirm password do not match')
+    error.statusCode = 400
+    throw error
+  }
+
+  return nextPassword
+}
+
+const signCandidatePortalToken = (candidate) =>
+  jwt.sign(
+    {
+      purpose: candidatePortalPurpose,
+      candidateId: String(candidate._id),
+      candidateCode: candidate.candidateCode
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: candidatePortalTokenMaxAge, algorithm: 'HS256' }
+  )
+
+const verifyCandidatePortalToken = async (req) => {
+  const authHeader = String(req.headers.authorization || '')
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
+  if (!token) return null
+
+  let decoded
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })
+  } catch (_error) {
+    return null
+  }
+
+  if (decoded?.purpose !== candidatePortalPurpose || !decoded?.candidateId) return null
+  return CmsCandidate.findById(decoded.candidateId).select('+candidatePortal.passwordHash')
 }
 
 const parseStructuredField = (value) => {
@@ -234,6 +294,7 @@ const normalizeApplicationPayload = (body) => {
   payload.suggestion = text(payload.suggestion)
   payload.marriageStatus = pickOption(payload.marriageStatus, ['Married', 'Unmarried', 'Single', 'Widow'])
   payload.applicationDetails = parseApplicationDetails(payload.applicationDetails)
+  payload.publicApplyState = normalizePublicApplyState(payload.publicApplyState)
 
   if (!payload.candidateName || !payload.mobileNumber) {
     const error = new Error('Candidate name and mobile number are required')
@@ -291,7 +352,7 @@ const normalizeApplicationPayload = (body) => {
   return payload
 }
 
-const ensureUniqueApplicationIdentity = async (payload) => {
+const ensureUniqueApplicationIdentity = async (payload, excludeCmsCandidateId = null, excludeCandidateId = null) => {
   const checks = [
     { field: 'mobileNumber', label: 'mobile number', value: payload.mobileNumber },
     { field: 'emailId', label: 'email', value: payload.emailId },
@@ -300,9 +361,13 @@ const ensureUniqueApplicationIdentity = async (payload) => {
   ].filter((item) => item.value)
 
   for (const check of checks) {
+    const cmsQuery = { [check.field]: check.value }
+    if (excludeCmsCandidateId) cmsQuery._id = { $ne: excludeCmsCandidateId }
+    const candidateQuery = { [check.field]: check.value }
+    if (excludeCandidateId) candidateQuery._id = { $ne: excludeCandidateId }
     const [existingCandidate, existingCmsCandidate] = await Promise.all([
-      Candidate.findOne({ [check.field]: check.value }).select('_id'),
-      CmsCandidate.findOne({ [check.field]: check.value }).select('_id')
+      Candidate.findOne(candidateQuery).select('_id'),
+      CmsCandidate.findOne(cmsQuery).select('_id')
     ])
 
     if (existingCandidate || existingCmsCandidate) {
@@ -357,12 +422,19 @@ const uploadApplicationDocuments = async (filesByField = {}) => {
     if (!isCandidateDocumentKey(documentType)) continue
 
     for (const file of files || []) {
-      validateUploadFile(file, {
-        allowedMimeTypes: candidateDocumentAllowedMimeTypesByKey[documentType],
-        allowedExtensions: candidateDocumentAllowedExtensionsByKey[documentType],
-        typeMessage: 'File type is not allowed for this document',
-        extensionMessage: 'File extension is not allowed for this document'
-      })
+      try {
+        validateUploadFile(file, {
+          allowedMimeTypes: candidateDocumentAllowedMimeTypesByKey[documentType],
+          allowedExtensions: candidateDocumentAllowedExtensionsByKey[documentType],
+          typeMessage: 'File type is not allowed for this document',
+          extensionMessage: 'File extension is not allowed for this document'
+        })
+      } catch (error) {
+        const documentLabel = candidateDocumentLabelByKey[documentType] || 'Document'
+        const fileName = file?.originalname || 'selected file'
+        error.message = `${documentLabel} - ${fileName}: ${error.message}`
+        throw error
+      }
       const fileUrl = await uploadToS3(file, 'candidate-documents')
       documents.push({
         documentType,
@@ -394,60 +466,72 @@ const getAdvisorByCode = async (req, res) => {
   })
 }
 
-const createCmsCandidate = async (payload, superAdmin, advisor, sourceCandidate = null) => {
+const cmsCandidateFieldsFromPayload = (payload) => ({
+  formMeta: payload.formMeta,
+  fullName: payload.candidateName,
+  collegeName: payload.collegeName,
+  mobileNumber: payload.mobileNumber,
+  aadhaarNo: payload.aadhaarNo,
+  panNo: payload.panNo,
+  whatsappNo: payload.whatsappNo,
+  emailId: payload.emailId,
+  dateOfBirth: payload.dateOfBirth,
+  gender: payload.gender,
+  currentAge: payload.currentAge,
+  currentAddress: payload.currentAddress,
+  permanentAddress: payload.permanentAddress,
+  education: payload.education,
+  yearOfHigherEducation: payload.yearOfHigherEducation,
+  computerCourses: payload.computerCourses,
+  otherAchievements: payload.otherAchievements,
+  specialization: payload.interestedDepartment,
+  totalExperience: payload.totalExperience,
+  experienceDepartment: payload.experienceDepartment,
+  currentCompany: payload.currentCompany,
+  keyResponsibilities: payload.keyResponsibilities,
+  careerSummary: payload.careerSummary,
+  currentDesignation: payload.appliedFor || undefined,
+  currentSalary: payload.currentSalary,
+  expectedSalary: payload.expectedSalary,
+  noticePeriod: payload.noticePeriod === undefined ? undefined : String(payload.noticePeriod),
+  preferredLocation: payload.preferredJobLocation,
+  marriageStatus: payload.marriageStatus,
+  appliedFor: payload.appliedFor,
+  interestedDepartment: payload.interestedDepartment,
+  lookingForField: payload.lookingForField,
+  preferredIndustry: payload.preferredIndustry,
+  preferredJobLocation: payload.preferredJobLocation,
+  availabilityForInterview: payload.availabilityForInterview,
+  interviewMode: payload.interviewMode,
+  reasonForJobChange: payload.reasonForJobChange,
+  currentJobLocation: payload.currentJobLocation,
+  currentJobLocationOther: payload.currentJobLocationOther,
+  currentJobLocationMidcArea: payload.currentJobLocationMidcArea,
+  currentJobLocationMidcAreaOther: payload.currentJobLocationMidcAreaOther,
+  placementReference: payload.placementReference,
+  familyDetails: payload.familyDetails,
+  applicationDetails: payload.applicationDetails,
+  publicApplyState: payload.publicApplyState,
+  goalAim: payload.goalAim,
+  feedback: payload.feedback,
+  suggestion: payload.suggestion
+})
+
+const createCmsCandidate = async (payload, superAdmin, advisor, sourceCandidate = null, portalCredential = null) => {
   const advisorName = advisor ? await resolveAdvisorDisplayName(advisor) : null
   const candidateCode = await nextCandidateCode()
   const cmsCandidate = await CmsCandidate.create({
     candidateCode,
     sourceCandidateId: sourceCandidate?._id || null,
-    formMeta: payload.formMeta,
-    fullName: payload.candidateName,
-    collegeName: payload.collegeName,
-    mobileNumber: payload.mobileNumber,
-    aadhaarNo: payload.aadhaarNo,
-    panNo: payload.panNo,
-    whatsappNo: payload.whatsappNo,
-    emailId: payload.emailId,
-    dateOfBirth: payload.dateOfBirth,
-    gender: payload.gender,
-    currentAge: payload.currentAge,
-    currentAddress: payload.currentAddress,
-    permanentAddress: payload.permanentAddress,
-    education: payload.education,
-    yearOfHigherEducation: payload.yearOfHigherEducation,
-    computerCourses: payload.computerCourses,
-    otherAchievements: payload.otherAchievements,
-    specialization: payload.interestedDepartment,
-    totalExperience: payload.totalExperience,
-    experienceDepartment: payload.experienceDepartment,
-    currentCompany: payload.currentCompany,
-    keyResponsibilities: payload.keyResponsibilities,
-    careerSummary: payload.careerSummary,
-    currentDesignation: payload.appliedFor || undefined,
-    currentSalary: payload.currentSalary,
-    expectedSalary: payload.expectedSalary,
-    noticePeriod: payload.noticePeriod === undefined ? undefined : String(payload.noticePeriod),
-    preferredLocation: payload.preferredJobLocation,
-    marriageStatus: payload.marriageStatus,
-    appliedFor: payload.appliedFor,
-    interestedDepartment: payload.interestedDepartment,
-    lookingForField: payload.lookingForField,
-    preferredIndustry: payload.preferredIndustry,
-    preferredJobLocation: payload.preferredJobLocation,
-    availabilityForInterview: payload.availabilityForInterview,
-    interviewMode: payload.interviewMode,
-    reasonForJobChange: payload.reasonForJobChange,
-    currentJobLocation: payload.currentJobLocation,
-    currentJobLocationOther: payload.currentJobLocationOther,
-    currentJobLocationMidcArea: payload.currentJobLocationMidcArea,
-    currentJobLocationMidcAreaOther: payload.currentJobLocationMidcAreaOther,
-    placementReference: payload.placementReference,
-    familyDetails: payload.familyDetails,
-    applicationDetails: payload.applicationDetails,
-    goalAim: payload.goalAim,
-    feedback: payload.feedback,
-    suggestion: payload.suggestion,
+    ...cmsCandidateFieldsFromPayload(payload),
     documents: payload.documents || [],
+    candidatePortal: portalCredential
+      ? {
+          passwordHash: portalCredential.passwordHash,
+          password: portalCredential.password,
+          lastUpdatedAt: new Date()
+        }
+      : undefined,
     source: 'public_form',
     intakeType: advisor ? 'advisor' : 'walkin',
     advisor: advisor?._id || null,
@@ -465,7 +549,7 @@ const createCmsCandidate = async (payload, superAdmin, advisor, sourceCandidate 
   return cmsCandidate
 }
 
-const submitToAdvisorFlow = async (req, res, payload, advisor, superAdmin) => {
+const submitToAdvisorFlow = async (req, res, payload, advisor, superAdmin, portalCredential) => {
   const advisorName = await resolveAdvisorDisplayName(advisor)
   await Candidate.updateMany({ status: 'not_viewed' }, { $inc: { priorityOrder: 1 } })
 
@@ -480,7 +564,8 @@ const submitToAdvisorFlow = async (req, res, payload, advisor, superAdmin) => {
     priorityOrder: 0
   })
 
-  const cmsCandidate = await createCmsCandidate(payload, superAdmin, advisor, student)
+  const cmsCandidate = await createCmsCandidate(payload, superAdmin, advisor, student, portalCredential)
+  const candidateToken = signCandidatePortalToken(cmsCandidate)
 
   const io = req.app.get('io')
   const studentObject = student.toObject()
@@ -505,27 +590,35 @@ const submitToAdvisorFlow = async (req, res, payload, advisor, superAdmin) => {
     studentId: student._id,
     cmsCandidateId: cmsCandidate._id,
     candidateCode: cmsCandidate.candidateCode || null,
+    candidateToken,
     mode: 'advisor'
   })
 }
 
-const submitToCmsFlow = async (res, payload, superAdmin) => {
+const submitToCmsFlow = async (res, payload, superAdmin, portalCredential) => {
   if (!superAdmin) {
     return res.status(500).json({ message: 'No active super admin found for direct submission' })
   }
 
-  const cmsCandidate = await createCmsCandidate(payload, superAdmin, null)
+  const cmsCandidate = await createCmsCandidate(payload, superAdmin, null, null, portalCredential)
+  const candidateToken = signCandidatePortalToken(cmsCandidate)
 
   return res.status(201).json({
     message: 'Application submitted to candidate management successfully',
     studentId: cmsCandidate._id,
     candidateCode: cmsCandidate.candidateCode || null,
+    candidateToken,
     mode: 'cms'
   })
 }
 
 const submitApplication = async (req, res) => {
   const payload = normalizeApplicationPayload(req.body || {})
+  const password = validateCandidatePassword(req.body?.candidatePassword, req.body?.candidatePasswordConfirm)
+  const portalCredential = {
+    passwordHash: await bcrypt.hash(password, 12),
+    password
+  }
   await ensureUniqueApplicationIdentity(payload)
   const superAdmin = await findActiveSuperAdmin()
   if (!superAdmin) {
@@ -540,11 +633,106 @@ const submitApplication = async (req, res) => {
   if (advisorCode) {
     const advisor = await findAdvisorByCode(advisorCode)
     if (advisor) {
-      return submitToAdvisorFlow(req, res, payload, advisor, superAdmin)
+      return submitToAdvisorFlow(req, res, payload, advisor, superAdmin, portalCredential)
     }
   }
 
-  return submitToCmsFlow(res, payload, superAdmin)
+  return submitToCmsFlow(res, payload, superAdmin, portalCredential)
+}
+
+const candidateSessionPayload = (candidate, token = null) => ({
+  candidate: {
+    id: candidate._id,
+    candidateCode: candidate.candidateCode,
+    fullName: candidate.fullName,
+    mobileNumber: candidate.mobileNumber,
+    publicApplyState: candidate.publicApplyState || {},
+    documents: candidate.documents || [],
+    updatedAt: candidate.updatedAt
+  },
+  ...(token ? { candidateToken: token } : {})
+})
+
+const loginCandidateApplication = async (req, res) => {
+  const identifier = String(req.body?.candidateCode || req.body?.mobileNumber || '').trim()
+  const password = String(req.body?.password || '')
+
+  if (!identifier || !password) {
+    return res.status(400).json({ message: 'Mobile number or Candidate ID and password are required' })
+  }
+
+  // Determine lookup: 10-digit number → mobile, otherwise → candidateCode
+  const isMobile = /^\d{10}$/.test(identifier)
+  let candidate = null
+
+  if (isMobile) {
+    // Find the most recent CMS candidate with this mobile who has a portal password
+    candidate = await CmsCandidate.findOne({ mobileNumber: identifier, 'candidatePortal.passwordHash': { $exists: true } })
+      .sort({ createdAt: -1 })
+      .select('+candidatePortal.passwordHash')
+  } else {
+    candidate = await CmsCandidate.findOne({ candidateCode: identifier.toUpperCase() }).select('+candidatePortal.passwordHash')
+  }
+
+  if (!candidate?.candidatePortal?.passwordHash) {
+    return res.status(401).json({ message: 'Invalid credentials. Check your mobile number or Candidate ID and password.' })
+  }
+
+  const passwordMatches = await bcrypt.compare(password, candidate.candidatePortal.passwordHash)
+  if (!passwordMatches) {
+    return res.status(401).json({ message: 'Invalid credentials. Check your mobile number or Candidate ID and password.' })
+  }
+
+  candidate.candidatePortal.lastLoginAt = new Date()
+  await candidate.save()
+
+  const token = signCandidatePortalToken(candidate)
+  res.json(candidateSessionPayload(candidate, token))
+}
+
+const getCandidateApplicationSession = async (req, res) => {
+  const candidate = await verifyCandidatePortalToken(req)
+  if (!candidate) {
+    return res.status(401).json({ message: 'Candidate login required' })
+  }
+
+  res.json(candidateSessionPayload(candidate))
+}
+
+const updateCandidateApplication = async (req, res) => {
+  const candidate = await verifyCandidatePortalToken(req)
+  if (!candidate) {
+    return res.status(401).json({ message: 'Candidate login required' })
+  }
+
+  const payload = normalizeApplicationPayload(req.body || {})
+  await ensureUniqueApplicationIdentity(payload, candidate._id, candidate.sourceCandidateId)
+  const uploadedDocuments = await uploadApplicationDocuments(req.files)
+
+  Object.assign(candidate, cmsCandidateFieldsFromPayload(payload))
+  if (uploadedDocuments.length) {
+    candidate.documents = [...(candidate.documents || []), ...uploadedDocuments]
+  }
+  candidate.candidatePortal.lastUpdatedAt = new Date()
+  await candidate.save()
+
+  if (candidate.sourceCandidateId) {
+    await Candidate.findByIdAndUpdate(candidate.sourceCandidateId, {
+      ...payload,
+      candidateName: payload.candidateName,
+      documents: uploadedDocuments.length
+        ? [...(candidate.documents || [])]
+        : candidate.documents || []
+    })
+  }
+
+  invalidateReferenceCaches()
+
+  res.json({
+    message: 'Application updated successfully',
+    candidateCode: candidate.candidateCode,
+    candidate: candidateSessionPayload(candidate).candidate
+  })
 }
 
 const downloadSharedSuccessRemarkPdf = async (req, res) => {
@@ -596,4 +784,11 @@ const downloadSharedSuccessRemarkPdf = async (req, res) => {
   res.end(buffer)
 }
 
-module.exports = { getAdvisorByCode, submitApplication, downloadSharedSuccessRemarkPdf }
+module.exports = {
+  getAdvisorByCode,
+  submitApplication,
+  loginCandidateApplication,
+  getCandidateApplicationSession,
+  updateCandidateApplication,
+  downloadSharedSuccessRemarkPdf
+}

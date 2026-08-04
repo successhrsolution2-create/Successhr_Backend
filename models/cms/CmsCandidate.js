@@ -138,6 +138,19 @@ const cmsCandidateSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: () => ({})
     },
+    publicApplyState: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({})
+    },
+    candidatePortal: {
+      passwordHash: {
+        type: String,
+        select: false
+      },
+      password: String,
+      lastLoginAt: Date,
+      lastUpdatedAt: Date
+    },
     candidateVisits: [candidateVisitSchema],
     goalAim: String,
     feedback: String,

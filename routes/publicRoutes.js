@@ -1,6 +1,13 @@
 const express = require('express')
 const rateLimit = require('express-rate-limit')
-const { getAdvisorByCode, submitApplication, downloadSharedSuccessRemarkPdf } = require('../controllers/publicController')
+const {
+  getAdvisorByCode,
+  submitApplication,
+  loginCandidateApplication,
+  getCandidateApplicationSession,
+  updateCandidateApplication,
+  downloadSharedSuccessRemarkPdf
+} = require('../controllers/publicController')
 const { cache } = require('../src/middleware/cache')
 const { candidateDocumentUpload } = require('../middleware/uploadMiddleware')
 const { candidateDocumentUploadFields } = require('../utils/candidateDocuments')
@@ -27,6 +34,9 @@ const pdfLimiter = rateLimit({
 })
 
 router.get('/advisor/:code', codeLookupLimiter, cache(120), getAdvisorByCode)
+router.post('/candidate/login', codeLookupLimiter, loginCandidateApplication)
+router.get('/candidate/me', codeLookupLimiter, getCandidateApplicationSession)
+router.put('/candidate/apply', submitLimiter, candidateDocumentUpload.fields(candidateDocumentUploadFields), updateCandidateApplication)
 router.get('/sr/:code.pdf', pdfLimiter, downloadSharedSuccessRemarkPdf)
 router.get('/candidates/success-remark/:token.pdf', pdfLimiter, downloadSharedSuccessRemarkPdf)
 router.post('/apply', submitLimiter, candidateDocumentUpload.fields(candidateDocumentUploadFields), submitApplication)
