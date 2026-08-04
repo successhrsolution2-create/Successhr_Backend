@@ -162,10 +162,6 @@ const validateCrmLogin = (req, _res, next) => {
 
   if (!password) {
     addValidationError(req, 'password', 'Password is required')
-  } else if (password.length < PASSWORD_MIN_LENGTH) {
-    addValidationError(req, 'password', `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
-  } else if (password.length > PASSWORD_MAX_LENGTH) {
-    addValidationError(req, 'password', `Password cannot exceed ${PASSWORD_MAX_LENGTH} characters`)
   }
 
   req.body.email = loginId.includes('@') ? loginId.toLowerCase() : loginId.toUpperCase()
