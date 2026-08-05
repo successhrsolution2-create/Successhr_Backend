@@ -756,6 +756,10 @@ const updateCandidateApplication = async (req, res) => {
   if (uploadedDocuments.length) {
     candidate.documents = [...(candidate.documents || []), ...uploadedDocuments]
   }
+  
+  // Explicitly mark Mixed objects as modified so Mongoose saves them
+  ['formMeta', 'placementReference', 'familyDetails', 'applicationDetails', 'publicApplyState'].forEach((k) => candidate.markModified(k))
+  
   candidate.candidatePortal.lastUpdatedAt = new Date()
   await candidate.save()
 
