@@ -690,11 +690,15 @@ const candidateSessionPayload = (candidate, token = null) => ({
     familyDetails: candidate.familyDetails,
     applicationDetails: candidate.applicationDetails,
     publicApplyState: candidate.publicApplyState || {},
+    goalAim: candidate.goalAim,
+    feedback: candidate.feedback,
+    suggestion: candidate.suggestion,
     documents: candidate.documents || [],
     updatedAt: candidate.updatedAt
   },
   ...(token ? { candidateToken: token } : {})
 })
+
 
 const loginCandidateApplication = async (req, res) => {
   const identifier = String(req.body?.candidateCode || req.body?.mobileNumber || '').trim()
