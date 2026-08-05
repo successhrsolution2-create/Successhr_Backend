@@ -98,7 +98,10 @@ const dashboardSummary = async (_req, res) => {
     weeklyRows,
     approvedLeavesToday,
     pendingLeaves,
-    recentLeaves
+    recentLeaves,
+    totalPublicCandidates,
+    todayPublicCandidates,
+    latest10Candidates
   ] = await Promise.all([
     User.countDocuments({ role: 'businessAdvisor', isActive: true }),
     Company.countDocuments({ status: { $in: ['in_review', 'priority', 'done'] } }),
@@ -144,7 +147,10 @@ const dashboardSummary = async (_req, res) => {
       .populate('employee', 'firstName lastName email')
       .sort({ createdAt: -1 })
       .limit(4)
-      .lean()
+      .lean(),
+    Candidate.countDocuments({}),
+    Candidate.countDocuments({ createdAt: { $gte: todayStart, $lte: todayEnd } }),
+    Candidate.find({}).select('candidateName emailId mobileNumber jobProfile status createdAt').sort({ createdAt: -1 }).limit(10).lean()
   ])
 
   const advisorNameMap = new Map(
@@ -304,6 +310,11 @@ const dashboardSummary = async (_req, res) => {
         .map((record) => ({ name: fullName(record.employee), time: formatTime(record.checkIn.time), status: record.status })),
       birthdays,
       anniversaries
+    },
+    candidateManagementStats: {
+      totalCandidates: totalPublicCandidates,
+      todayCandidates: todayPublicCandidates,
+      latestCandidates: latest10Candidates
     },
     pendingActions,
     recentActivity
