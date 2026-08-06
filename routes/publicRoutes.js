@@ -33,7 +33,7 @@ const pdfLimiter = rateLimit({
   message: { message: 'Too many PDF requests. Please wait a moment.' }
 })
 
-router.get('/advisor/:code', codeLookupLimiter, cache(120), getAdvisorByCode)
+router.get('/ba/:code', codeLookupLimiter, cache(120), getAdvisorByCode)
 router.post('/candidate/login', codeLookupLimiter, loginCandidateApplication)
 router.get('/candidate/me', codeLookupLimiter, getCandidateApplicationSession)
 router.put('/candidate/apply', submitLimiter, candidateDocumentUpload.fields(candidateDocumentUploadFields), updateCandidateApplication)

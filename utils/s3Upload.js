@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3')
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3')
 // TODO: Upgrade the production Node.js runtime to >=22 before January 2027 for AWS SDK v3 support.
 const fs = require('fs')
 const fsp = require('fs/promises')
@@ -224,5 +224,30 @@ module.exports = {
         Key: key
       })
     )
+  },
+  deleteFromS3: async (fileUrlOrKey) => {
+    if (isLocalUploadUrl(fileUrlOrKey)) {
+      const relativePath = trimSlashes(String(fileUrlOrKey).slice(localUploadUrlPrefix.length))
+      const filePath = path.resolve(localUploadRoot, relativePath)
+      if (!filePath.startsWith(path.resolve(localUploadRoot) + path.sep)) {
+        return
+      }
+      return fsp.unlink(filePath).catch(() => {})
+    }
+
+    const missing = getMissing()
+    if (missing.length) {
+      return
+    }
+
+    const key = s3KeyFromFileUrl(fileUrlOrKey)
+    if (!key) return
+
+    return s3Client.send(
+      new DeleteObjectCommand({
+        Bucket: process.env.AWS_S3_BUCKET,
+        Key: key
+      })
+    ).catch(() => {})
   }
 }

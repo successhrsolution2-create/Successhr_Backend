@@ -13,7 +13,7 @@ const ExcelJS = require('exceljs')
 const bcrypt = require('bcryptjs')
 const { nextCandidateCode, nextCandidateCodes } = require('../../utils/cmsCandidateCode')
 const { syncCandidateFromCms } = require('../../utils/candidateStatusSync')
-const { uploadToS3, getObjectFromS3 } = require('../../utils/s3Upload')
+const { uploadToS3, getObjectFromS3, deleteFromS3 } = require('../../utils/s3Upload')
 const { validateUploadFile } = require('../../utils/fileValidation')
 const { generateSuccessRemarkPdf, successRemarkPdfFileName } = require('../../utils/successRemarkPdf')
 const {
@@ -185,6 +185,13 @@ const chunkArray = (items, size) => {
 const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve))
 
 const deleteCmsCandidateBatch = async (candidateIds, linkedCandidateIds = []) => {
+  // Gather files to delete from S3
+  const candidatesToDelete = await CmsCandidate.find({ _id: { $in: candidateIds } }).lean()
+  const fileUrlsToDelete = candidatesToDelete
+    .flatMap((c) => c.documents || [])
+    .map((doc) => doc.fileUrl)
+    .filter(Boolean)
+
   await CmsInterview.deleteMany({ candidateId: { $in: candidateIds } })
   await CmsRemark.deleteMany({ candidateId: { $in: candidateIds } })
   await CmsPdfShare.deleteMany({ candidateId: { $in: candidateIds } })
@@ -199,7 +206,10 @@ const deleteCmsCandidateBatch = async (candidateIds, linkedCandidateIds = []) =>
     await Candidate.deleteMany({ _id: { $in: linkedCandidateIds } })
   }
 
-  return CmsCandidate.deleteMany({ _id: { $in: candidateIds } })
+  await CmsCandidate.deleteMany({ _id: { $in: candidateIds } })
+
+  // Delete files from S3 asynchronously after DB removal
+  Promise.allSettled(fileUrlsToDelete.map(url => deleteFromS3(url)))
 }
 
 const invalidateReferenceCaches = () => {
@@ -1508,13 +1518,18 @@ const deleteCandidateDocument = async (req, res) => {
     return res.status(404).json({ message: 'Candidate not found' })
   }
 
-  const nextDocuments = (candidate.documents || []).filter((doc) => String(doc?._id) !== String(req.params.docId))
-  if (nextDocuments.length === (candidate.documents || []).length) {
+  const documentToDelete = (candidate.documents || []).find((doc) => String(doc?._id) === String(req.params.docId))
+  if (!documentToDelete) {
     return res.status(404).json({ message: 'Document not found' })
   }
 
-  candidate.documents = nextDocuments
+  candidate.documents = candidate.documents.filter((doc) => String(doc?._id) !== String(req.params.docId))
   await candidate.save()
+  
+  if (documentToDelete.fileUrl) {
+    await deleteFromS3(documentToDelete.fileUrl)
+  }
+
   await syncCandidateFromCms(candidate)
   invalidateReferenceCaches()
   res.json({ candidate: withResolvedReference(candidate) })

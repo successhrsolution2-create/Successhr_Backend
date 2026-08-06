@@ -11,6 +11,7 @@ const cmsInterviewSchema = new mongoose.Schema(
     companyName: { type: String, required: true, trim: true },
     jobRole: { type: String, trim: true },
     reference: String,
+    hrRecruiterName: String,
     attendInterview: String,
     interestedForJoin: String,
     interviewDate: Date,

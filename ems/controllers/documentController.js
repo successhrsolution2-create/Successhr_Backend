@@ -74,11 +74,16 @@ const downloadDocument = async (req, res) => {
 }
 
 const deleteDocument = async (req, res) => {
-  const document = await Document.findByIdAndDelete(req.params.id)
+  const document = await Document.findById(req.params.id)
   if (!document) {
     return res.status(404).json({ message: 'Document not found' })
   }
 
+  if (!canAccessEmployee(req, document.employee)) {
+    return res.status(403).json({ message: 'You cannot access this document' })
+  }
+
+  await document.deleteOne()
   await fs.unlink(document.path).catch(() => {})
   res.json({ message: 'Document deleted' })
 }
