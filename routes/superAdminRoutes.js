@@ -4,11 +4,16 @@ const { dashboardSummary } = require('../controllers/superAdminDashboardControll
 const { verifyToken } = require('../middleware/authMiddleware')
 const { requireRole } = require('../middleware/roleMiddleware')
 
-const { getCandidateChartData } = require('../controllers/superAdminChartController')
+const {
+  getCandidateChartData,
+  getCandidateDistributionData
+} = require('../controllers/superAdminChartController')
 
 const router = express.Router()
 
 router.get('/dashboard-summary', verifyToken, requireRole('superAdmin'), dashboardSummary)
 router.get('/candidate-chart-data', verifyToken, requireRole('superAdmin'), getCandidateChartData)
+router.get('/candidate-distribution', verifyToken, requireRole('superAdmin'), getCandidateDistributionData)
 
 module.exports = router
+

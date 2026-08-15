@@ -30,6 +30,7 @@ const {
   getRemarks,
   updateRemarks
 } = require('../../controllers/cms/cmsController')
+const { exportCandidates } = require('../../controllers/cms/cmsExportController')
 const upload = require('../../middleware/uploadMiddleware')
 const { candidateDocumentUpload } = upload
 const { spreadsheetUpload } = upload
@@ -64,6 +65,7 @@ router.route('/candidates').get(listLimiter, listCandidates).post(createCandidat
 router.post('/candidates/import/preview', importLimiter, spreadsheetUpload.single('file'), previewImportCandidates)
 router.post('/candidates/import/confirm', importLimiter, confirmImportCandidates)
 router.post('/candidates/import', importLimiter, spreadsheetUpload.single('file'), importCandidates)
+router.get('/candidates/export', listLimiter, exportCandidates)
 router.delete('/candidates/bulk', bulkDeleteCandidates)
 router.route('/candidates/:id').get(getCandidateById).put(updateCandidate).delete(deleteCandidate)
 router.post('/candidates/:id/documents', uploadLimiter, candidateDocumentUpload.single('document'), uploadCandidateDocument)

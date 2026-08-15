@@ -401,6 +401,47 @@ const deleteBusinessAdvisorUser = async (req, res) => {
   res.json({ message: 'Business Advisor removed' })
 }
 
+const updateCandidateAdmin = async (req, res) => {
+  const body = requestBody(req.body)
+  const { name, email, isActive } = body
+
+  if (name !== undefined && !trimmedText(name)) return res.status(400).json({ message: 'Name must be text' })
+  if (email !== undefined && !trimmedText(email)) return res.status(400).json({ message: 'Email must be text' })
+  if (isActive !== undefined && typeof isActive !== 'boolean') return res.status(400).json({ message: 'isActive must be true or false' })
+
+  const user = await User.findOne({ _id: req.params.id, role: 'candidateAdmin' })
+  if (!user) {
+    return res.status(404).json({ message: 'Candidate Admin not found' })
+  }
+
+  const normalizedEmail = email !== undefined ? trimmedText(email).toLowerCase() : undefined
+  if (normalizedEmail && normalizedEmail !== user.email) {
+    await ensureLoginIdentityAvailable({ email: normalizedEmail }, { exclude: { user: user._id } })
+    user.email = normalizedEmail
+  }
+
+  if (name !== undefined) user.name = trimmedText(name)
+  if (isActive !== undefined) user.isActive = isActive
+
+  await user.save()
+  res.json({ user })
+}
+
+const deleteCandidateAdmin = async (req, res) => {
+  const user = await User.findOne({ _id: req.params.id, role: 'candidateAdmin' })
+  if (!user) {
+    return res.status(404).json({ message: 'Candidate Admin not found' })
+  }
+
+  await user.deleteOne()
+  res.json({ message: 'Candidate Admin removed' })
+}
+
+const listAdminUsers = async (_req, res) => {
+  const users = await User.find({}).sort({ createdAt: -1 })
+  res.json({ users })
+}
+
 module.exports = {
   listBusinessAdvisors,
   createBusinessAdvisor,
@@ -411,5 +452,8 @@ module.exports = {
   createManager,
   updateManager,
   resetManagerPassword,
-  deleteManager
+  deleteManager,
+  listAdminUsers,
+  updateCandidateAdmin,
+  deleteCandidateAdmin
 }

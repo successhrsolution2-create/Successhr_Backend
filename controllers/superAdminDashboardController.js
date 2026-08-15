@@ -1,5 +1,6 @@
 const BusinessAdvisor = require('../models/BusinessAdvisor')
 const Candidate = require('../models/Candidate')
+const CmsCandidate = require('../models/cms/CmsCandidate')
 const Company = require('../models/Company')
 const Placement = require('../models/Placement')
 const User = require('../models/User')
@@ -52,6 +53,100 @@ const relativeTime = (date) => {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
 }
 
+const compactText = (...values) =>
+  values.map((value) => String(value || '').trim()).find(Boolean) || ''
+
+const userDisplayName = (user = {}) =>
+  compactText(user.name, user.email, user.advisorCode)
+
+const cmsCandidateLogSource = (candidate = {}) => {
+  if (candidate.source === 'public_form' && candidate.intakeType === 'advisor') {
+    return { type: 'candidate_apply_ba', label: 'Candidate Apply via BA' }
+  }
+
+  if (candidate.source === 'public_form') {
+    return { type: 'candidate_apply', label: 'Candidate Apply Form' }
+  }
+
+  if (candidate.intakeType === 'advisor' || candidate.sourceCandidateId) {
+    return { type: 'business_advisor', label: 'Business Advisor' }
+  }
+
+  return { type: 'cms', label: 'CMS' }
+}
+
+const cmsCandidateAddedBy = (candidate = {}, sourceType) => {
+  if (sourceType === 'candidate_apply') return 'Candidate Apply Form'
+  if (sourceType === 'candidate_apply_ba' || sourceType === 'business_advisor') {
+    return compactText(candidate.referenceName, userDisplayName(candidate.advisor), userDisplayName(candidate.createdBy), 'Business Advisor')
+  }
+  return compactText(userDisplayName(candidate.createdBy), 'Super Admin')
+}
+
+const mapCmsCandidateLog = (candidate = {}) => {
+  const source = cmsCandidateLogSource(candidate)
+  const createdAt = candidate.createdAt || new Date()
+
+  return {
+    id: `cms-${candidate._id}`,
+    recordType: 'cms',
+    candidateId: String(candidate._id || ''),
+    sourceCandidateId: candidate.sourceCandidateId ? String(candidate.sourceCandidateId) : '',
+    candidateCode: candidate.candidateCode || '',
+    candidateName: compactText(candidate.fullName, 'Unnamed candidate'),
+    mobileNumber: candidate.mobileNumber || '',
+    emailId: candidate.emailId || '',
+    profile: compactText(candidate.appliedFor, candidate.currentDesignation, candidate.interestedDepartment),
+    sourceType: source.type,
+    sourceLabel: source.label,
+    addedBy: cmsCandidateAddedBy(candidate, source.type),
+    createdAt,
+    time: relativeTime(createdAt),
+    route: `/admin/cms/candidates/${candidate._id}`
+  }
+}
+
+const mapAdvisorCandidateLog = (candidate = {}) => {
+  const createdAt = candidate.createdAt || new Date()
+  const isPublicForm = candidate.source === 'public_form'
+
+  return {
+    id: `candidate-${candidate._id}`,
+    recordType: 'candidate',
+    candidateId: String(candidate._id || ''),
+    sourceCandidateId: '',
+    candidateCode: '',
+    candidateName: compactText(candidate.candidateName, 'Unnamed candidate'),
+    mobileNumber: candidate.mobileNumber || '',
+    emailId: candidate.emailId || '',
+    profile: compactText(candidate.appliedFor, candidate.jobProfile),
+    sourceType: isPublicForm ? 'candidate_apply_ba' : 'business_advisor',
+    sourceLabel: isPublicForm ? 'Candidate Apply via BA' : 'Business Advisor',
+    addedBy: compactText(userDisplayName(candidate.submittedBy), 'Business Advisor'),
+    createdAt,
+    time: relativeTime(createdAt),
+    route: '/admin/references'
+  }
+}
+
+const buildRecentCandidateLogs = (cmsCandidates = [], advisorCandidates = []) => {
+  const linkedCandidateIds = new Set(
+    cmsCandidates
+      .map((candidate) => candidate.sourceCandidateId)
+      .filter(Boolean)
+      .map((id) => String(id))
+  )
+
+  return [
+    ...cmsCandidates.map(mapCmsCandidateLog),
+    ...advisorCandidates
+      .filter((candidate) => !linkedCandidateIds.has(String(candidate._id || '')))
+      .map(mapAdvisorCandidateLog)
+  ]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 12)
+}
+
 const payrollPendingDepartments = async ({ month, year, activeEmployees }) => {
   if (!activeEmployees.length) return 0
   const payrollEmployeeIds = await Payroll.find({ month, year }).distinct('employee')
@@ -101,6 +196,8 @@ const dashboardSummary = async (_req, res) => {
     recentLeaves,
     totalPublicCandidates,
     todayPublicCandidates,
+    recentCmsCandidates,
+    recentSourceCandidates,
     latest10Candidates
   ] = await Promise.all([
     User.countDocuments({ role: 'businessAdvisor', isActive: true }),
@@ -150,6 +247,19 @@ const dashboardSummary = async (_req, res) => {
       .lean(),
     Candidate.countDocuments({}),
     Candidate.countDocuments({ createdAt: { $gte: todayStart, $lte: todayEnd } }),
+    CmsCandidate.find({})
+      .select('candidateCode fullName mobileNumber emailId appliedFor currentDesignation interestedDepartment createdAt source intakeType advisor advisorCode referenceName createdBy sourceCandidateId')
+      .populate('createdBy', 'name email role advisorCode')
+      .populate('advisor', 'name email role advisorCode')
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean(),
+    Candidate.find({})
+      .select('candidateName mobileNumber emailId appliedFor jobProfile source createdAt submittedBy')
+      .populate('submittedBy', 'name email role advisorCode')
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean(),
     Candidate.find({}).select('candidateName emailId mobileNumber jobProfile status createdAt').sort({ createdAt: -1 }).limit(10).lean()
   ])
 
@@ -237,6 +347,7 @@ const dashboardSummary = async (_req, res) => {
     { type: 'crm_followups', count: crmFollowupsDue, route: '/admin/crm/candidates' },
     { type: 'payroll_pending', count: payrollPending, route: '/ems/payroll' }
   ]
+  const recentCandidateLogs = buildRecentCandidateLogs(recentCmsCandidates, recentSourceCandidates)
 
   const recentActivity = [
     ...todayAttendance
@@ -314,7 +425,8 @@ const dashboardSummary = async (_req, res) => {
     candidateManagementStats: {
       totalCandidates: totalPublicCandidates,
       todayCandidates: todayPublicCandidates,
-      latestCandidates: latest10Candidates
+      latestCandidates: latest10Candidates,
+      recentCandidateLogs
     },
     pendingActions,
     recentActivity
