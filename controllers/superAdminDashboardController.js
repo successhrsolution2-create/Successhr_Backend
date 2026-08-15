@@ -194,8 +194,8 @@ const dashboardSummary = async (_req, res) => {
     approvedLeavesToday,
     pendingLeaves,
     recentLeaves,
-    totalPublicCandidates,
-    todayPublicCandidates,
+    totalCmsCandidates,
+    todayCmsCandidates,
     recentCmsCandidates,
     recentSourceCandidates,
     latest10Candidates
@@ -245,8 +245,8 @@ const dashboardSummary = async (_req, res) => {
       .sort({ createdAt: -1 })
       .limit(4)
       .lean(),
-    Candidate.countDocuments({}),
-    Candidate.countDocuments({ createdAt: { $gte: todayStart, $lte: todayEnd } }),
+    CmsCandidate.countDocuments({}),
+    CmsCandidate.countDocuments({ createdAt: { $gte: todayStart, $lte: todayEnd } }),
     CmsCandidate.find({})
       .select('candidateCode fullName mobileNumber emailId appliedFor currentDesignation interestedDepartment createdAt source intakeType advisor advisorCode referenceName createdBy sourceCandidateId')
       .populate('createdBy', 'name email role advisorCode')
@@ -423,8 +423,8 @@ const dashboardSummary = async (_req, res) => {
       anniversaries
     },
     candidateManagementStats: {
-      totalCandidates: totalPublicCandidates,
-      todayCandidates: todayPublicCandidates,
+      totalCandidates: totalCmsCandidates,
+      todayCandidates: todayCmsCandidates,
       latestCandidates: latest10Candidates,
       recentCandidateLogs
     },
