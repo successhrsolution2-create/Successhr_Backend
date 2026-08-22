@@ -37,7 +37,7 @@ const createUpload = (types, message, extraLimits = {}) => multer({
   storage: diskStorage,
   fileFilter: createFileFilter(types, message),
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: 50 * 1024 * 1024,
     fieldSize: 256 * 1024,
     fields: 50,
     parts: 100,
@@ -70,7 +70,7 @@ const spreadsheetUpload = multer({
     cb(error)
   },
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: 50 * 1024 * 1024,
     fieldSize: 256 * 1024,
     fields: 5,
     parts: 10,

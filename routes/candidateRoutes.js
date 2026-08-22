@@ -16,12 +16,13 @@ const upload = require('../middleware/uploadMiddleware')
 const { cache } = require('../src/middleware/cache')
 
 const router = express.Router()
+const { candidateDocumentUpload } = upload
 
 router.use(verifyToken)
 
 router.route('/').get(cache(300), getCandidates).post(requireRole('businessAdvisor'), createCandidate)
 router.patch('/reorder', requireRole('superAdmin'), reorderCandidates)
-router.post('/:id/docs', requireRole('businessAdvisor', 'superAdmin'), upload.array('documents', 40), uploadCandidateDocuments)
+router.post('/:id/docs', requireRole('businessAdvisor', 'superAdmin'), candidateDocumentUpload.array('documents', 40), uploadCandidateDocuments)
 router.delete('/:id/docs/:docId', requireRole('superAdmin'), deleteCandidateDocument)
 router.patch('/:id/status', requireRole('superAdmin'), updateCandidateStatus)
 router

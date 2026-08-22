@@ -8,7 +8,13 @@ const { nextCandidateCode } = require('../utils/cmsCandidateCode')
 const { syncCmsFromCandidate } = require('../utils/candidateStatusSync')
 const { emitToAdmin, emitToBA } = require('../socket')
 const { uploadToS3 } = require('../utils/s3Upload')
-const { validateUploadFile } = require('../utils/fileValidation')
+const {
+  validateUploadFile,
+  ALLOWED_MIME_TYPES,
+  ALLOWED_EXTENSIONS,
+  VIDEO_MIME_TYPES,
+  VIDEO_EXTENSIONS
+} = require('../utils/fileValidation')
 const {
   candidateDocumentAllowedExtensionsByKey,
   candidateDocumentAllowedMimeTypesByKey,
@@ -214,6 +220,9 @@ const optionalEnums = {
   marriageStatus: ['Married', 'Unmarried', 'Single', 'Widow'],
   siblingGender: ['Male', 'Female', 'Other']
 }
+
+const genericCandidateDocumentMimeTypes = new Set([...ALLOWED_MIME_TYPES, ...VIDEO_MIME_TYPES])
+const genericCandidateDocumentExtensions = new Set([...ALLOWED_EXTENSIONS, ...VIDEO_EXTENSIONS])
 
 const normalizeOptionalEnum = (object, field, allowedValues) => {
   if (!object || !Object.prototype.hasOwnProperty.call(object, field)) return
@@ -556,7 +565,12 @@ const uploadCandidateDocuments = async (req, res) => {
         extensionMessage: 'File extension is not allowed for this document'
       })
     } else {
-      validateUploadFile(file)
+      validateUploadFile(file, {
+        allowedMimeTypes: genericCandidateDocumentMimeTypes,
+        allowedExtensions: genericCandidateDocumentExtensions,
+        typeMessage: 'Only JPG, PNG, PDF, MP4, MOV, and WebM files are allowed',
+        extensionMessage: 'Invalid file extension. Use .jpg, .jpeg, .png, .pdf, .mp4, .mov, or .webm'
+      })
     }
 
     const fileUrl = await uploadToS3(file, 'candidate-documents')

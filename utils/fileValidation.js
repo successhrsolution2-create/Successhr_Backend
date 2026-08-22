@@ -1,7 +1,7 @@
 const path = require('path')
 const fs = require('fs')
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024
+const MAX_FILE_SIZE = 50 * 1024 * 1024
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf'])
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.pdf'])
 const VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/webm'])
@@ -78,7 +78,7 @@ const validateUploadFile = (file, options = {}) => {
   }
 
   if (!Number.isFinite(file.size) || file.size <= 0 || file.size > MAX_FILE_SIZE) {
-    const error = new Error('File size must be greater than 0 and up to 10MB')
+    const error = new Error('File size must be greater than 0 and up to 50MB')
     error.statusCode = 400
     throw error
   }
@@ -112,6 +112,7 @@ module.exports = {
   validateImageUploadFile,
   MAX_FILE_SIZE,
   ALLOWED_MIME_TYPES,
+  ALLOWED_EXTENSIONS,
   VIDEO_MIME_TYPES,
   VIDEO_EXTENSIONS,
   IMAGE_MIME_TYPES

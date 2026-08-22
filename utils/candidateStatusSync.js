@@ -52,6 +52,7 @@ const findCandidateByCms = async (cmsCandidate) => {
 
 const copyDocuments = (documents = []) =>
   (documents || []).map((doc) => ({
+    ...(doc._id ? { _id: doc._id } : {}),
     documentType: doc.documentType,
     documentLabel: doc.documentLabel,
     fileName: doc.fileName,

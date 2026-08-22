@@ -30,6 +30,12 @@ const {
   getRemarks,
   updateRemarks
 } = require('../../controllers/cms/cmsController')
+const {
+  getDocuments,
+  createDocument,
+  updateDocument,
+  deleteDocument
+} = require('../../controllers/cms/cmsGeneratedDocumentController')
 const { exportCandidates } = require('../../controllers/cms/cmsExportController')
 const upload = require('../../middleware/uploadMiddleware')
 const { candidateDocumentUpload } = upload
@@ -71,6 +77,12 @@ router.route('/candidates/:id').get(getCandidateById).put(updateCandidate).delet
 router.post('/candidates/:id/documents', uploadLimiter, candidateDocumentUpload.single('document'), uploadCandidateDocument)
 router.delete('/candidates/:id/documents/:docId', deleteCandidateDocument)
 router.get('/candidates/:id/documents/:docId/view', viewCandidateDocument)
+router.route('/candidates/:id/generated-documents')
+  .get(listLimiter, getDocuments)
+  .post(uploadLimiter, createDocument)
+router.route('/candidates/:id/generated-documents/:docId')
+  .put(uploadLimiter, updateDocument)
+  .delete(deleteDocument)
 router.get('/candidates/:id/success-remark.pdf', downloadSuccessRemarkPdf)
 router.post('/candidates/:id/success-remark-share', createSuccessRemarkShareLink)
 router.route('/companies').get(listLimiter, listCompanies).post(createCompany)
