@@ -488,8 +488,8 @@ const createEmployee = async (req, res) => {
   if (payload.role === 'crm_employee' && !payload.password) {
     return res.status(400).json({ message: 'Temporary password is required for CRM Employee login' })
   }
-  if (payload.role === 'crm_employee' && payload.password.length < 8) {
-    return res.status(400).json({ message: 'CRM Employee password must be at least 8 characters' })
+  if (payload.role === 'crm_employee' && payload.password.length < 6) {
+    return res.status(400).json({ message: 'CRM Employee password must be at least 6 characters' })
   }
   if (APP_LOGIN_ROLES.includes(payload.role) && !payload.password) {
     return res.status(400).json({ message: 'Temporary password is required for this login role' })
@@ -564,8 +564,8 @@ const updateEmployee = async (req, res) => {
   const nextEmail = payload.email || employee.email
   const nextEmployeeId = payload.employeeId || employee.employeeId
 
-  if (nextRole === 'crm_employee' && rawPassword && rawPassword.length < 8) {
-    return res.status(400).json({ message: 'CRM Employee password must be at least 8 characters' })
+  if (nextRole === 'crm_employee' && rawPassword && rawPassword.length < 6) {
+    return res.status(400).json({ message: 'CRM Employee password must be at least 6 characters' })
   }
   if (nextRole === 'crm_employee' && !rawPassword && !wasCrmEmployee && !employee.crmUserId) {
     return res.status(400).json({ message: 'Temporary password is required when changing an employee to CRM Employee' })

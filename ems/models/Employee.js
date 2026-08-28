@@ -3,20 +3,7 @@ const mongoose = require('mongoose')
 
 const { EMPLOYEE_STATUSES, EMPLOYMENT_TYPES, EMS_ROLES } = require('../config/emsConstants')
 
-const salarySchema = new mongoose.Schema(
-  {
-    basic: { type: Number, default: 0, min: 0 },
-    hra: { type: Number, default: 0, min: 0 },
-    da: { type: Number, default: 0, min: 0 },
-    allowances: { type: Number, default: 0, min: 0 },
-    pf: { type: Number, default: 0, min: 0 },
-    tds: { type: Number, default: 0, min: 0 },
-    bankName: { type: String, trim: true },
-    accountNumber: { type: String, trim: true },
-    ifscCode: { type: String, trim: true, uppercase: true }
-  },
-  { _id: false }
-)
+
 
 const employeeSchema = new mongoose.Schema(
   {
@@ -119,10 +106,7 @@ const employeeSchema = new mongoose.Schema(
       type: String,
       select: false
     },
-    salary: {
-      type: salarySchema,
-      default: () => ({})
-    },
+
     emergencyContact: {
       name: { type: String, trim: true },
       relation: { type: String, trim: true },

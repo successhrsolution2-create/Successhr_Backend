@@ -322,6 +322,7 @@ const getCandidatePayload = (body, recruiterId) => ({
   ...(body.interviewDate ? { interviewDate: body.interviewDate } : {}),
   interviewTime: body.interviewTime,
   recruiterId,
+  enteredRecruiterId: body.enteredRecruiterId,
   overallCallingRemark: body.overallCallingRemark,
   candidateClass: body.candidateClass,
   registrationInfo: body.registrationInfo,
@@ -916,7 +917,7 @@ const getDashboardStats = async (req, res) => {
             pending: { $sum: { $cond: [{ $eq: ['$callStatus', 'pending'] }, 1, 0] } },
             called: { $sum: { $cond: [{ $eq: ['$callStatus', 'called'] }, 1, 0] } },
             followup: { $sum: { $cond: [{ $eq: ['$callStatus', 'followup'] }, 1, 0] } },
-            converted: { $sum: { $cond: [{ $eq: ['$callStatus', 'converted'] }, 1, 0] } },
+            sure: { $sum: { $cond: [{ $eq: ['$callStatus', 'sure'] }, 1, 0] } },
             rejected: { $sum: { $cond: [{ $eq: ['$callStatus', 'rejected'] }, 1, 0] } }
           }
         }
@@ -940,7 +941,7 @@ const getDashboardStats = async (req, res) => {
       pending: 0,
       called: 0,
       followup: 0,
-      converted: 0,
+      sure: 0,
       rejected: 0
     }
 
@@ -963,7 +964,7 @@ const getDashboardStats = async (req, res) => {
         called: totals.called,
         pending: totals.pending,
         followup: totals.followup,
-        converted: totals.converted,
+        sure: totals.sure,
         rejected: totals.rejected,
         calledToday,
         byClass,

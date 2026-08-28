@@ -462,7 +462,7 @@ const getReports = async (req, res) => {
               total: { $sum: 1 },
               active: { $sum: { $cond: ['$isActive', 1, 0] } },
               inactive: { $sum: { $cond: ['$isActive', 0, 1] } },
-              converted: { $sum: { $cond: [{ $eq: ['$callStatus', 'converted'] }, 1, 0] } },
+              sure: { $sum: { $cond: [{ $eq: ['$callStatus', 'sure'] }, 1, 0] } },
               pending: { $sum: { $cond: [{ $eq: ['$callStatus', 'pending'] }, 1, 0] } },
               followup: { $sum: { $cond: [{ $eq: ['$callStatus', 'followup'] }, 1, 0] } }
             }
@@ -510,7 +510,7 @@ const getReports = async (req, res) => {
       total: 0,
       active: 0,
       inactive: 0,
-      converted: 0,
+      sure: 0,
       pending: 0,
       followup: 0
     }
@@ -539,7 +539,7 @@ const getReports = async (req, res) => {
           total: totals.total,
           active: totals.active,
           inactive: totals.inactive,
-          converted: totals.converted,
+          sure: totals.sure,
           pending: totals.pending,
           followup: totals.followup,
           byClass,

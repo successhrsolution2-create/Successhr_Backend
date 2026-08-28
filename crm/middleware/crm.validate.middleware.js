@@ -7,7 +7,7 @@ const BLOCKED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 
 const CANDIDATE_CLASSES = ['1st', '2nd', '3rd']
 const CALL_LOG_STATUSES = ['answered', 'not_answered', 'busy', 'callback']
-const CALL_STATUSES = ['pending', 'called', 'followup', 'converted', 'rejected']
+const CALL_STATUSES = ['pending', 'called', 'followup', 'sure', 'rejected']
 const INTERESTED_STATUSES = ['yes', 'no']
 const REGISTRATION_INFO = ['RC', 'WRC', 'RC data', 'WRC data', 'College contacts']
 

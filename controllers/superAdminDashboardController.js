@@ -12,6 +12,8 @@ const Department = require('../ems/models/Department')
 const Employee = require('../ems/models/Employee')
 const Leave = require('../ems/models/Leave')
 const Payroll = require('../ems/models/Payroll')
+const CompanyVacancy = require('../models/companyManagement/CompanyVacancy')
+const CompanyInterviewInfo = require('../models/companyManagement/CompanyInterviewInfo')
 
 const pad = (value) => String(value).padStart(2, '0')
 const startOfDay = (value = new Date()) => {
@@ -198,7 +200,9 @@ const dashboardSummary = async (_req, res) => {
     todayCmsCandidates,
     recentCmsCandidates,
     recentSourceCandidates,
-    latest10Candidates
+    latest10Candidates,
+    recentVacancies,
+    recentInterviewFeedback
   ] = await Promise.all([
     User.countDocuments({ role: 'businessAdvisor', isActive: true }),
     Company.countDocuments({ status: { $in: ['in_review', 'priority', 'done'] } }),
@@ -260,7 +264,9 @@ const dashboardSummary = async (_req, res) => {
       .sort({ createdAt: -1 })
       .limit(20)
       .lean(),
-    Candidate.find({}).select('candidateName emailId mobileNumber jobProfile status createdAt').sort({ createdAt: -1 }).limit(10).lean()
+    Candidate.find({}).select('candidateName emailId mobileNumber jobProfile status createdAt').sort({ createdAt: -1 }).limit(10).lean(),
+    CompanyVacancy.find({}).select('jobProfile companyName createdAt companyAdminId').populate('companyAdminId', 'name').sort({ createdAt: -1 }).limit(8).lean(),
+    CompanyInterviewInfo.find({}).select('companyName candidateInterview.candidateName updatedAt companyAdminId').populate('companyAdminId', 'name').sort({ updatedAt: -1 }).limit(8).lean()
   ])
 
   const advisorNameMap = new Map(
@@ -289,7 +295,7 @@ const dashboardSummary = async (_req, res) => {
     { stage: 'New Lead', count: pipelineMap.get('pending') || 0 },
     { stage: 'Contacted', count: pipelineMap.get('called') || 0 },
     { stage: 'In Progress', count: (pipelineMap.get('followup') || 0) + (pipelineMap.get('busy') || 0) },
-    { stage: 'Success', count: pipelineMap.get('converted') || 0 },
+    { stage: 'Success', count: pipelineMap.get('sure') || 0 },
     { stage: 'Not Interested', count: pipelineMap.get('rejected') || 0 }
   ]
 
@@ -358,12 +364,6 @@ const dashboardSummary = async (_req, res) => {
         time: relativeTime(record.checkIn.time),
         timestamp: new Date(record.checkIn.time)
       })),
-    ...recentCrmCandidates.map((candidate) => ({
-      module: 'crm',
-      text: `New candidate ${candidate.candidateName} added`,
-      time: relativeTime(candidate.createdAt),
-      timestamp: new Date(candidate.createdAt)
-    })),
     ...recentCompanies.map((company) => ({
       module: 'advisor',
       text: `New advisor company "${company.companyName}" registered`,
@@ -381,6 +381,18 @@ const dashboardSummary = async (_req, res) => {
       text: `Leave request from ${fullName(leave.employee)} is pending`,
       time: relativeTime(leave.createdAt),
       timestamp: new Date(leave.createdAt)
+    })),
+    ...recentVacancies.map((vacancy) => ({
+      module: 'company_admin',
+      text: `Company Admin ${vacancy.companyAdminId?.name || vacancy.companyName} added vacancy for ${vacancy.jobProfile}`,
+      time: relativeTime(vacancy.createdAt),
+      timestamp: new Date(vacancy.createdAt)
+    })),
+    ...recentInterviewFeedback.map((info) => ({
+      module: 'company_admin',
+      text: `Company Admin ${info.companyAdminId?.name || info.companyName} updated interview info for ${info.candidateInterview?.candidateName}`,
+      time: relativeTime(info.updatedAt),
+      timestamp: new Date(info.updatedAt)
     })),
     ...recentPlacements.map((placement) => ({
       module: 'advisor',

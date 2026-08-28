@@ -210,7 +210,7 @@ const generateCrmSheet = async (workbook, fromDate, toDate) => {
           total: { $sum: 1 },
           active: { $sum: { $cond: ['$isActive', 1, 0] } },
           interested: { $sum: { $cond: [{ $eq: ['$interested.status', 'yes'] }, 1, 0] } },
-          converted: { $sum: { $cond: [{ $eq: ['$callStatus', 'converted'] }, 1, 0] } },
+          sure: { $sum: { $cond: [{ $eq: ['$callStatus', 'sure'] }, 1, 0] } },
           pending: { $sum: { $cond: [{ $eq: ['$callStatus', 'pending'] }, 1, 0] } }
         }
       },
@@ -254,32 +254,32 @@ const generateCrmSheet = async (workbook, fromDate, toDate) => {
       { header: 'Value', key: 'value', width: 28 },
       { header: 'Count', key: 'count', width: 14 },
       { header: 'Interested', key: 'interested', width: 14 },
-      { header: 'Converted', key: 'converted', width: 14 },
+      { header: 'Sure', key: 'sure', width: 14 },
       { header: 'Percentage', key: 'percentage', width: 14 }
     ],
     autoFilterTo: 'F1',
     rows: [
-      sanitizeRow({ type: 'Total', value: 'Employees', count: totalEmployees, interested: '', converted: '', percentage: '' }),
-      sanitizeRow({ type: 'Total', value: 'Candidates', count: totalCrm, interested: '', converted: '', percentage: '100%' }),
-      sanitizeRow({ type: 'Total', value: 'Call Logs', count: totalCallLogs, interested: '', converted: '', percentage: '' }),
+      sanitizeRow({ type: 'Total', value: 'Employees', count: totalEmployees, interested: '', sure: '', percentage: '' }),
+      sanitizeRow({ type: 'Total', value: 'Candidates', count: totalCrm, interested: '', sure: '', percentage: '100%' }),
+      sanitizeRow({ type: 'Total', value: 'Call Logs', count: totalCallLogs, interested: '', sure: '', percentage: '' }),
       ...recruiterAgg.map((item) =>
         sanitizeRow({
           type: 'Recruiter',
           value: item.recruiter?.name || idString(item._id) || 'Unknown',
           count: item.total,
           interested: item.interested,
-          converted: item.converted,
-          percentage: percent(item.converted, item.total)
+          sure: item.sure,
+          percentage: percent(item.sure, item.total)
         })
       ),
       ...statusAgg.map((item) =>
-        sanitizeRow({ type: 'Call Status', value: item._id || 'Unknown', count: item.count, interested: '', converted: '', percentage: percent(item.count, totalCrm) })
+        sanitizeRow({ type: 'Call Status', value: item._id || 'Unknown', count: item.count, interested: '', sure: '', percentage: percent(item.count, totalCrm) })
       ),
       ...classAgg.map((item) =>
-        sanitizeRow({ type: 'Candidate Class', value: item._id || 'Unknown', count: item.count, interested: item.interested, converted: '', percentage: percent(item.count, totalCrm) })
+        sanitizeRow({ type: 'Candidate Class', value: item._id || 'Unknown', count: item.count, interested: item.interested, sure: '', percentage: percent(item.count, totalCrm) })
       ),
       ...interestedAgg.map((item) =>
-        sanitizeRow({ type: 'Interested Status', value: item._id || 'Blank', count: item.count, interested: '', converted: '', percentage: percent(item.count, totalCrm) })
+        sanitizeRow({ type: 'Interested Status', value: item._id || 'Blank', count: item.count, interested: '', sure: '', percentage: percent(item.count, totalCrm) })
       ),
       ...monthlyAgg.map((item) =>
         sanitizeRow({
@@ -287,7 +287,7 @@ const generateCrmSheet = async (workbook, fromDate, toDate) => {
           value: `${String(item._id.month).padStart(2, '0')}/${item._id.year}`,
           count: item.count,
           interested: '',
-          converted: '',
+          sure: '',
           percentage: percent(item.count, totalCrm)
         })
       )

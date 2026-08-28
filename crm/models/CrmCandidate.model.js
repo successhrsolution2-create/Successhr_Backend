@@ -5,7 +5,7 @@ const { Schema } = mongoose
 const INTERESTED_STATUSES = ['yes', 'no']
 const CANDIDATE_CLASSES = ['1st', '2nd', '3rd']
 const REGISTRATION_INFO = ['RC', 'WRC', 'RC data', 'WRC data', 'College contacts']
-const CALL_STATUSES = ['pending', 'called', 'followup', 'converted', 'rejected']
+const CALL_STATUSES = ['pending', 'called', 'followup', 'sure', 'rejected']
 
 const interestedSchema = new Schema(
   {
@@ -91,6 +91,11 @@ const crmCandidateSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'CrmUser',
       required: [true, 'Recruiter is required']
+    },
+    enteredRecruiterId: {
+      type: String,
+      trim: true,
+      maxlength: [50, 'Entered recruiter ID cannot exceed 50 characters']
     },
     overallCallingRemark: {
       type: String,
