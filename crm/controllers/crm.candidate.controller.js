@@ -701,7 +701,20 @@ const listCandidates = async (req, res) => {
           }
         },
         { $addFields: { latestCall: { $arrayElemAt: ['$latestCall', 0] } } },
-        { $project: { __v: 0 } }
+        {
+          $lookup: {
+            from: 'crm_users',
+            localField: 'recruiterId',
+            foreignField: '_id',
+            as: 'recruiter'
+          }
+        },
+        {
+          $addFields: {
+            recruiter: { $arrayElemAt: ['$recruiter', 0] }
+          }
+        },
+        { $project: { __v: 0, 'recruiter.password': 0, 'recruiter.__v': 0 } }
       ])
     ])
     const numberedCandidates = candidates.map((candidate, index) => ({
