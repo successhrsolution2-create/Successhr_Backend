@@ -1192,6 +1192,7 @@ const createCompany = async (req, res) => {
 }
 
 const listCandidates = async (req, res) => {
+  const atsSearch = queryText(req.query.atsSearch)
   const search = queryText(req.query.search)
   const candidateId = queryText(req.query.candidateId || req.query.id, 40)
   const jobRole = queryText(req.query.jobRole, 120)
@@ -1204,6 +1205,15 @@ const listCandidates = async (req, res) => {
   const pageSize = positiveInt(req.query.pageSize, 10, 100)
 
   const query = {}
+  let projection = undefined
+  let sortOverride = undefined
+  
+  if (atsSearch) {
+    query.$text = { $search: atsSearch }
+    projection = { score: { $meta: 'textScore' } }
+    sortOverride = { score: { $meta: 'textScore' } }
+  }
+
   if (search) {
     const regex = new RegExp(escapeRegExp(search), 'i')
     query.$or = [

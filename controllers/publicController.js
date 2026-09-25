@@ -10,6 +10,7 @@ const bcrypt = require('bcryptjs')
 const { nextCandidateCode } = require('../utils/cmsCandidateCode')
 const { invalidateCache } = require('../src/utils/invalidateCache')
 const { uploadToS3 } = require('../utils/s3Upload')
+const pdfParse = require('pdf-parse')
 const { validateUploadFile } = require('../utils/fileValidation')
 const { generateSuccessRemarkPdf, successRemarkPdfFileName } = require('../utils/successRemarkPdf')
 const {
@@ -436,7 +437,19 @@ const uploadApplicationDocuments = async (filesByField = {}) => {
         throw error
       }
       const fileUrl = await uploadToS3(file, 'candidate-documents')
+      
+      let extractedText = ''
+      if (documentType === 'updatedResume' && file.mimetype === 'application/pdf') {
+        try {
+          const pdfData = await pdfParse(file.buffer)
+          extractedText = pdfData.text || ''
+        } catch (err) {
+          console.error('Failed to parse resume PDF', err)
+        }
+      }
+
       documents.push({
+        extractedText,
         documentType,
         documentLabel: candidateDocumentLabelByKey[documentType],
         fileName: file.originalname,
@@ -625,6 +638,10 @@ const submitApplication = async (req, res) => {
     return res.status(500).json({ message: 'No active super admin found for candidate management submission' })
   }
   payload.documents = await uploadApplicationDocuments(req.files)
+  const resumeDoc = payload.documents.find(d => d.documentType === 'updatedResume' && d.extractedText)
+  if (resumeDoc) {
+    payload.resumeText = resumeDoc.extractedText
+  }
 
   const paramCode = String(req.params.code || '').trim().toLowerCase()
   const bodyCode = String(req.body?.advisorCode || '').trim().toLowerCase()
@@ -759,6 +776,10 @@ const updateCandidateApplication = async (req, res) => {
   Object.assign(candidate, cmsCandidateFieldsFromPayload(payload))
   if (uploadedDocuments.length) {
     candidate.documents = [...(candidate.documents || []), ...uploadedDocuments]
+    const resumeDoc = uploadedDocuments.find(d => d.documentType === 'updatedResume' && d.extractedText)
+    if (resumeDoc) {
+      candidate.resumeText = resumeDoc.extractedText
+    }
   }
   
   // Explicitly mark Mixed objects as modified so Mongoose saves them

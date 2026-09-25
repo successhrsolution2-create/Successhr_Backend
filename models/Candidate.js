@@ -171,6 +171,7 @@ const candidateSchema = new mongoose.Schema(
       rcWrcStatus: String,
       interviewAttainedList: String
     },
+    resumeText: String,
     documents: [
       {
         documentType: String,
