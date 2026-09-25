@@ -14,6 +14,7 @@ const bcrypt = require('bcryptjs')
 const { nextCandidateCode, nextCandidateCodes } = require('../../utils/cmsCandidateCode')
 const { syncCandidateFromCms } = require('../../utils/candidateStatusSync')
 const { uploadToS3, getObjectFromS3, deleteFromS3 } = require('../../utils/s3Upload')
+const pdfParse = require('pdf-parse')
 const { validateUploadFile } = require('../../utils/fileValidation')
 const { generateSuccessRemarkPdf, successRemarkPdfFileName } = require('../../utils/successRemarkPdf')
 const {
@@ -1504,8 +1505,20 @@ const uploadCandidateDocument = async (req, res) => {
     extensionMessage: 'File extension is not allowed for this document'
   })
   const fileUrl = await uploadToS3(req.file, 'candidate-documents')
+  
+  let extractedText = ''
+  if (documentType === 'updatedResume' && req.file.mimetype === 'application/pdf') {
+    try {
+      const pdfData = await pdfParse(req.file.buffer)
+      extractedText = pdfData.text || ''
+    } catch (err) {
+      console.error('Failed to parse resume PDF in CMS', err)
+    }
+  }
+
   candidate.documents = candidate.documents || []
   candidate.documents.push({
+    extractedText,
     documentType,
     documentLabel: candidateDocumentLabelByKey[documentType],
     fileName: req.file.originalname,
@@ -1514,6 +1527,10 @@ const uploadCandidateDocument = async (req, res) => {
     size: req.file.size,
     uploadedAt: new Date()
   })
+
+  if (extractedText) {
+    candidate.resumeText = extractedText
+  }
 
   await candidate.save()
   await syncCandidateFromCms(candidate)
