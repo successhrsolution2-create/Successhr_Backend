@@ -1,3 +1,4 @@
+const fs = require('fs')
 const CmsCandidate = require('../../models/cms/CmsCandidate')
 const CmsCompany = require('../../models/cms/CmsCompany')
 const CmsInterview = require('../../models/cms/CmsInterview')
@@ -1509,7 +1510,7 @@ const uploadCandidateDocument = async (req, res) => {
   let extractedText = ''
   if (documentType === 'updatedResume' && req.file.mimetype === 'application/pdf') {
     try {
-      const pdfData = await pdfParse(req.file.buffer)
+      const pdfData = await pdfParse(req.file.buffer || fs.readFileSync(req.file.path))
       extractedText = pdfData.text || ''
     } catch (err) {
       console.error('Failed to parse resume PDF in CMS', err)

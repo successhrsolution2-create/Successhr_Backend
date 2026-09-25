@@ -1,3 +1,4 @@
+const fs = require('fs')
 const Candidate = require('../models/Candidate')
 const CmsCandidate = require('../models/cms/CmsCandidate')
 const CmsPdfShare = require('../models/cms/CmsPdfShare')
@@ -441,7 +442,7 @@ const uploadApplicationDocuments = async (filesByField = {}) => {
       let extractedText = ''
       if (documentType === 'updatedResume' && file.mimetype === 'application/pdf') {
         try {
-          const pdfData = await pdfParse(file.buffer)
+          const pdfData = await pdfParse(file.buffer || fs.readFileSync(file.path))
           extractedText = pdfData.text || ''
         } catch (err) {
           console.error('Failed to parse resume PDF', err)
