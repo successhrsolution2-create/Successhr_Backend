@@ -2048,7 +2048,7 @@ const ATS_FIELDS = [
 const normalizeForAts = (str) =>
   String(str || '')
     .toLowerCase()
-    .replace(/[^a-z0-9\s+]/g, ' ')
+    .replace(/[^a-z0-9\s+]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
 
