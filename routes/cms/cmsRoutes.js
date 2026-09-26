@@ -1,4 +1,4 @@
-const express = require('express')
+﻿const express = require('express')
 const rateLimit = require('express-rate-limit')
 const {
   createCandidate,
@@ -28,7 +28,8 @@ const {
   updateInterview,
   deleteInterview,
   getRemarks,
-  updateRemarks
+  updateRemarks,
+  atsScanCandidates
 } = require('../../controllers/cms/cmsController')
 const {
   getDocuments,
@@ -73,6 +74,7 @@ router.post('/candidates/import/confirm', importLimiter, confirmImportCandidates
 router.post('/candidates/import', importLimiter, spreadsheetUpload.single('file'), importCandidates)
 router.get('/candidates/export', listLimiter, exportCandidates)
 router.delete('/candidates/bulk', bulkDeleteCandidates)
+router.get('/candidates/ats-scan', listLimiter, atsScanCandidates)
 router.route('/candidates/:id').get(getCandidateById).put(updateCandidate).delete(deleteCandidate)
 router.post('/candidates/:id/documents', uploadLimiter, candidateDocumentUpload.single('document'), uploadCandidateDocument)
 router.delete('/candidates/:id/documents/:docId', deleteCandidateDocument)

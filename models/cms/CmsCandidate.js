@@ -294,4 +294,33 @@ const cmsCandidateSchema = new mongoose.Schema(
 
 cmsCandidateSchema.index({ sourceCandidateId: 1 }, { sparse: true })
 
+// ATS text index — enables $text search and textScore ranking by keyword relevance
+cmsCandidateSchema.index(
+  {
+    fullName: 'text',
+    keySkills: 'text',
+    careerSummary: 'text',
+    currentDesignation: 'text',
+    appliedFor: 'text',
+    education: 'text',
+    experienceDepartment: 'text',
+    preferredIndustry: 'text',
+    resumeText: 'text'
+  },
+  {
+    weights: {
+      keySkills: 10,
+      currentDesignation: 6,
+      appliedFor: 6,
+      careerSummary: 4,
+      experienceDepartment: 3,
+      preferredIndustry: 3,
+      education: 2,
+      resumeText: 2,
+      fullName: 1
+    },
+    name: 'ats_text_index'
+  }
+)
+
 module.exports = mongoose.model('CmsCandidate', cmsCandidateSchema)

@@ -1283,9 +1283,18 @@ const listCandidates = async (req, res) => {
   }
 
   if (useLegacyAll) {
-    const candidates = await CmsCandidate.find(query)
+    let legacyQuery = CmsCandidate.find(query)
       .populate('advisor', 'name email advisorCode')
-      .sort({ createdAt: -1 })
+
+    if (atsSearch) {
+      legacyQuery = legacyQuery
+        .select({ score: { $meta: 'textScore' } })
+        .sort({ score: { $meta: 'textScore' }, createdAt: -1 })
+    } else {
+      legacyQuery = legacyQuery.sort({ createdAt: -1 })
+    }
+
+    const candidates = await legacyQuery
 
     const candidateIds = candidates.map((candidate) => candidate._id)
     const interviews = candidateIds.length
@@ -1329,9 +1338,9 @@ const listCandidates = async (req, res) => {
     educationOptionCandidates
   ] = await Promise.all([
     CmsCandidate.countDocuments(query),
-    CmsCandidate.find(query)
+    CmsCandidate.find(query, atsSearch ? { score: { $meta: 'textScore' } } : undefined)
       .populate('advisor', 'name email advisorCode')
-      .sort({ createdAt: -1 })
+      .sort(atsSearch ? { score: { $meta: 'textScore' }, createdAt: -1 } : { createdAt: -1 })
       .skip(skip)
       .limit(pageSize),
     CmsCandidate.countDocuments(),
@@ -2017,6 +2026,160 @@ const updateRemarks = async (req, res) => {
   })
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ATS SCAN ENGINE — brutal in-memory keyword scoring across all candidates
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Weighted fields: higher = more important for ATS ranking
+const ATS_FIELDS = [
+  { key: 'keySkills',          weight: 10, isArray: true },
+  { key: 'currentDesignation', weight: 7,  isArray: false },
+  { key: 'appliedFor',         weight: 7,  isArray: false },
+  { key: 'careerSummary',      weight: 5,  isArray: false },
+  { key: 'experienceDepartment', weight: 4, isArray: false },
+  { key: 'preferredIndustry',  weight: 3,  isArray: false },
+  { key: 'lookingForField',    weight: 3,  isArray: false },
+  { key: 'education',          weight: 2,  isArray: false },
+  { key: 'resumeText',         weight: 2,  isArray: false },
+  { key: 'keyResponsibilities',weight: 2,  isArray: false },
+  { key: 'fullName',           weight: 1,  isArray: false }
+]
+
+const normalizeForAts = (str) =>
+  String(str || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s+]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const scoreKeyword = (keyword, fieldValue, weight, isArray) => {
+  const kw = normalizeForAts(keyword)
+  if (!kw) return 0
+
+  const values = isArray
+    ? (Array.isArray(fieldValue) ? fieldValue : []).map((v) => normalizeForAts(v))
+    : [normalizeForAts(fieldValue)]
+
+  let best = 0
+  for (const val of values) {
+    if (!val) continue
+    if (val === kw) {
+      best = Math.max(best, weight * 3)          // exact match — triple score
+    } else if (val.split(/\s+/).includes(kw)) {
+      best = Math.max(best, weight * 2)          // whole word match
+    } else if (val.includes(kw)) {
+      best = Math.max(best, weight * 1)          // partial / substring match
+    }
+  }
+  return best
+}
+
+const atsScanCandidates = async (req, res) => {
+  const rawKeywords = queryText(req.query.keywords || req.query.atsSearch || '', 500)
+  if (!rawKeywords) {
+    return res.status(400).json({ message: 'keywords query param is required' })
+  }
+
+  // Parse comma/semicolon/pipe/newline separated keywords
+  const keywords = rawKeywords
+    .split(/[,;|\n]+/)
+    .map((k) => k.trim())
+    .filter(Boolean)
+    .slice(0, 30) // max 30 keywords
+
+  if (!keywords.length) {
+    return res.status(400).json({ message: 'Provide at least one keyword' })
+  }
+
+  // Fetch all candidates with the ATS fields only (lean for speed)
+  const allCandidates = await CmsCandidate.find({})
+    .select(
+      'fullName mobileNumber emailId keySkills currentDesignation appliedFor careerSummary ' +
+      'experienceDepartment preferredIndustry lookingForField education resumeText ' +
+      'keyResponsibilities totalExperience currentSalary expectedSalary collegeName ' +
+      'candidateCode gender successRemarks createdAt advisor advisorCode'
+    )
+    .populate('advisor', 'name advisorCode')
+    .lean()
+
+  const maxPossibleScore = keywords.length * ATS_FIELDS.reduce((sum, f) => sum + f.weight * 3, 0)
+
+  const scored = []
+
+  for (const candidate of allCandidates) {
+    let totalScore = 0
+    const matchedKeywords = []
+    const missedKeywords = []
+
+    for (const kw of keywords) {
+      let kwScore = 0
+      for (const field of ATS_FIELDS) {
+        kwScore += scoreKeyword(kw, candidate[field.key], field.weight, field.isArray)
+      }
+      if (kwScore > 0) {
+        matchedKeywords.push(kw)
+        totalScore += kwScore
+      } else {
+        missedKeywords.push(kw)
+      }
+    }
+
+    if (totalScore === 0) continue // skip zero-score candidates
+
+    const matchPercent = Math.min(
+      100,
+      Math.round((matchedKeywords.length / keywords.length) * 100)
+    )
+
+    const normalizedScore = maxPossibleScore > 0
+      ? Math.round((totalScore / maxPossibleScore) * 1000) / 10  // 0–100 scale, 1 decimal
+      : 0
+
+    scored.push({
+      _id: candidate._id,
+      candidateCode: candidate.candidateCode,
+      fullName: candidate.fullName,
+      mobileNumber: candidate.mobileNumber,
+      emailId: candidate.emailId,
+      keySkills: candidate.keySkills || [],
+      currentDesignation: candidate.currentDesignation,
+      appliedFor: candidate.appliedFor,
+      education: candidate.education,
+      totalExperience: candidate.totalExperience,
+      currentSalary: candidate.currentSalary,
+      expectedSalary: candidate.expectedSalary,
+      gender: candidate.gender,
+      successRemarks: candidate.successRemarks,
+      advisor: candidate.advisor,
+      advisorCode: candidate.advisorCode,
+      createdAt: candidate.createdAt,
+      // ATS scoring data
+      atsScore: normalizedScore,
+      atsRawScore: totalScore,
+      atsMatchPercent: matchPercent,
+      atsMatchedKeywords: matchedKeywords,
+      atsMissedKeywords: missedKeywords,
+      atsTotalKeywords: keywords.length
+    })
+  }
+
+  // Sort: highest score first, then by % keywords matched, then by recency
+  scored.sort((a, b) => {
+    if (b.atsScore !== a.atsScore) return b.atsScore - a.atsScore
+    if (b.atsMatchPercent !== a.atsMatchPercent) return b.atsMatchPercent - a.atsMatchPercent
+    return new Date(b.createdAt) - new Date(a.createdAt)
+  })
+
+  return res.json({
+    keywords,
+    totalScanned: allCandidates.length,
+    totalMatched: scored.length,
+    results: scored
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 module.exports = {
   createCandidate,
   importCandidates,
@@ -2045,5 +2208,6 @@ module.exports = {
   updateInterview,
   deleteInterview,
   getRemarks,
-  updateRemarks
+  updateRemarks,
+  atsScanCandidates
 }
