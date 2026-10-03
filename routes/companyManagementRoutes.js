@@ -8,7 +8,8 @@ const {
   resetAdminPassword,
   summary,
   updateAdmin,
-  updateInterviewPlacementFeedback
+  updateInterviewPlacementFeedback,
+  assignCandidates
 } = require('../controllers/companyAdminController')
 const { verifyToken } = require('../middleware/authMiddleware')
 const { requireRole } = require('../middleware/roleMiddleware')
@@ -21,6 +22,7 @@ router.route('/admins').get(listAdmins).post(createAdmin)
 router.route('/admins/:id').put(updateAdmin).delete(deleteAdmin)
 router.put('/admins/:id/reset-password', resetAdminPassword)
 router.get('/interview-info', listInterviewInfo)
+router.post('/interview-info/assign', assignCandidates)
 router.get('/vacancies', listVacancies)
 router.put('/interview-info/:id/placement-feedback', updateInterviewPlacementFeedback)
 

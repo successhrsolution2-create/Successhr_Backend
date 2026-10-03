@@ -1,0 +1,16 @@
+require("dotenv").config()
+const mongoose = require("mongoose")
+async function main() {
+  await mongoose.connect(process.env.MONGODB_URI)
+  const col = mongoose.connection.collection("cms_candidates")
+  const total = await col.countDocuments()
+  const withResume = await col.countDocuments({ resumeText: { $type: "string" } })
+  const withSkills = await col.countDocuments({ "keySkills.0": { $exists: true } })
+  const sample = await col.find({ "keySkills.0": { $exists: true } })
+    .project({ fullName:1, keySkills:1, currentDesignation:1, appliedFor:1, resumeText:1, education:1, totalExperience:1, careerSummary:1 })
+    .limit(3).toArray()
+  console.log("Total:", total, "| With resumeText:", withResume, "| With skills:", withSkills)
+  console.log(JSON.stringify(sample, null, 2))
+  await mongoose.disconnect()
+}
+main().catch(e => { console.error(e.message); process.exit(1) })

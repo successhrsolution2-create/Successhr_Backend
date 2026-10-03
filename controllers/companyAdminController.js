@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken')
 const CompanyAdmin = require('../models/companyManagement/CompanyAdmin')
 const CompanyInterviewInfo = require('../models/companyManagement/CompanyInterviewInfo')
 const CompanyVacancy = require('../models/companyManagement/CompanyVacancy')
+const CmsCandidate = require('../models/cms/CmsCandidate')
 const { ensureLoginIdentityAvailable } = require('../utils/loginIdentity')
 const { uploadToS3 } = require('../utils/s3Upload')
 const { validateUploadFile } = require('../utils/fileValidation')
@@ -132,6 +133,10 @@ const normalizeCompanyAdminPayload = (rawBody, { partial = false } = {}) => {
     if (typeof body.isActive !== 'boolean') throw validationError('isActive must be true or false')
     payload.isActive = body.isActive
   }
+  if (!partial || body.companyAddress !== undefined) payload.companyAddress = body.companyAddress ? String(body.companyAddress).trim() : ''
+  if (!partial || body.designation !== undefined) payload.designation = body.designation ? String(body.designation).trim() : ''
+  if (!partial || body.website !== undefined) payload.website = body.website ? String(body.website).trim() : ''
+  if (!partial || body.industry !== undefined) payload.industry = body.industry ? String(body.industry).trim() : ''
 
   return payload
 }
@@ -604,6 +609,63 @@ const updateInterviewPlacementFeedback = async (req, res) => {
   res.json({ message: 'Placement feedback updated', interviewInfo: populated })
 }
 
+const assignCandidates = async (req, res) => {
+  const { companyAdminId, candidateIds, interviewDateTime } = req.body
+  
+  if (!companyAdminId || !candidateIds || !Array.isArray(candidateIds) || candidateIds.length === 0) {
+    return res.status(400).json({ message: 'Invalid assignment payload' })
+  }
+
+  const companyAdmin = await CompanyAdmin.findById(companyAdminId)
+  if (!companyAdmin) return res.status(404).json({ message: 'Company Admin not found' })
+
+  const candidates = await CmsCandidate.find({ _id: { $in: candidateIds } })
+  if (candidates.length === 0) return res.status(404).json({ message: 'No valid candidates found' })
+
+  const newRecords = []
+  
+  for (const candidate of candidates) {
+    let resumeUrl = null
+    let resumeName = null
+    // Extract resume from documents
+    const resumeDoc = candidate.documents?.find(doc => doc.documentType === 'resume' || (doc.mimeType && doc.mimeType.includes('pdf')))
+    if (resumeDoc) {
+      resumeUrl = resumeDoc.fileUrl
+      resumeName = resumeDoc.fileName
+    }
+
+    const payload = {
+      companyAdminId: companyAdmin._id,
+      companyName: companyAdmin.companyName,
+      candidateInterview: {
+        candidateName: candidate.fullName,
+        gender: candidate.gender || 'Male',
+        education: candidate.education || '',
+        department: candidate.interestedDepartment || candidate.experienceDepartment || '',
+        interviewDateTime: interviewDateTime || new Date(),
+        attendedInterview: 'Yes',
+        interestedForJoin: 'Yes',
+        feedbackFromCompany: 'Pending',
+        feedbackFromPlacement: 'Pending',
+        interviewStatus: 'Pending'
+      }
+    }
+    
+    if (resumeUrl) {
+      payload.candidateInterview.resume = {
+        fileUrl: resumeUrl,
+        fileName: resumeName || 'Resume.pdf'
+      }
+    }
+
+    newRecords.push(payload)
+  }
+
+  await CompanyInterviewInfo.insertMany(newRecords)
+
+  res.status(200).json({ message: 'Candidates assigned successfully', count: newRecords.length })
+}
+
 module.exports = {
   createAdmin,
   createOwnInterviewInfo,
@@ -623,6 +685,7 @@ module.exports = {
   summary,
   updateAdmin,
   updateInterviewPlacementFeedback,
+  assignCandidates,
   updateOwnInterviewInfo,
   updateOwnVacancy
 }

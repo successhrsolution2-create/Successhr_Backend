@@ -28,6 +28,10 @@ const companyAdminSchema = new mongoose.Schema(
       trim: true,
       maxlength: 10
     },
+    companyAddress: { type: String, trim: true },
+    designation: { type: String, trim: true },
+    website: { type: String, trim: true },
+    industry: { type: String, trim: true },
     password: {
       type: String,
       required: true,

@@ -1,4 +1,4 @@
-﻿const express = require('express')
+const express = require('express')
 const rateLimit = require('express-rate-limit')
 const {
   createCandidate,
@@ -43,7 +43,7 @@ const upload = require('../../middleware/uploadMiddleware')
 const { candidateDocumentUpload } = upload
 const { spreadsheetUpload } = upload
 const multer = require('multer')
-const pdfMemoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 20 }, fileFilter: (_req, file, cb) => { if (file.mimetype === 'application/pdf') cb(null, true); else cb(new Error('Only PDF files are allowed')) } })
+const pdfMemoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 }, fileFilter: (_req, file, cb) => { if (file.mimetype === 'application/pdf') cb(null, true); else cb(new Error('Only PDF files are allowed')) } })
 
 const router = express.Router()
 
@@ -78,7 +78,7 @@ router.post('/candidates/import', importLimiter, spreadsheetUpload.single('file'
 router.get('/candidates/export', listLimiter, exportCandidates)
 router.delete('/candidates/bulk', bulkDeleteCandidates)
 router.get('/candidates/ats-scan', listLimiter, atsScanCandidates)
-router.post('/candidates/ats-import-pdf', uploadLimiter, pdfMemoryUpload.array('resumes', 20), atsImportResumePdfs)
+router.post('/candidates/ats-import-pdf', uploadLimiter, pdfMemoryUpload.array('resumes'), atsImportResumePdfs)
 router.route('/candidates/:id').get(getCandidateById).put(updateCandidate).delete(deleteCandidate)
 router.post('/candidates/:id/documents', uploadLimiter, candidateDocumentUpload.single('document'), uploadCandidateDocument)
 router.delete('/candidates/:id/documents/:docId', deleteCandidateDocument)

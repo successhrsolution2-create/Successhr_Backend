@@ -1,4 +1,4 @@
-﻿const jwt = require('jsonwebtoken')
+const jwt = require('jsonwebtoken')
 const CrmUser = require('../models/CrmUser.model')
 
 const CRM_ROLES = ['crm_super_admin', 'crm_employee']
@@ -36,15 +36,32 @@ const verifyCrmToken = async (req, res, next) => {
     if (cmsToken) {
       try {
         const decodedCms = jwt.verify(cmsToken, process.env.JWT_SECRET, { algorithms: ['HS256'] })
-        if (['superAdmin', 'candidateAdmin'].includes(decodedCms.role)) {
-          const adminUser = await CrmUser.findOne({ role: 'crm_super_admin' })
-          if (adminUser) {
+        
+        // We need to fetch the CMS user to get their actual role because the token only contains { id, tokenVersion }
+        const mongoose = require('mongoose')
+        const CmsUser = mongoose.model('User')
+        const cmsUser = await CmsUser.findById(decodedCms.id)
+        
+        if (cmsUser) {
+          if (['superAdmin', 'candidateAdmin'].includes(cmsUser.role)) {
+            const adminUser = await CrmUser.findOne({ role: 'crm_super_admin' })
+            if (adminUser) {
+              req.crmUser = {
+                id: adminUser._id.toString(),
+                _id: adminUser._id,
+                name: 'CMS Admin',
+                email: adminUser.email,
+                role: 'crm_super_admin'
+              }
+              return next()
+            }
+          } else if (cmsUser.role === 'manager') {
             req.crmUser = {
-              id: adminUser._id.toString(),
-              _id: adminUser._id,
-              name: 'CMS Admin',
-              email: adminUser.email,
-              role: 'crm_super_admin'
+              id: cmsUser._id.toString(),
+              _id: cmsUser._id,
+              name: cmsUser.name || 'Manager',
+              email: cmsUser.email || '',
+              role: 'crm_super_admin' // Allowed to bypass route guards
             }
             return next()
           }
@@ -119,6 +136,11 @@ const checkCrmRole = (allowedRoles = []) => {
         success: false,
         message: 'CRM authentication is required'
       })
+    }
+
+    // Let crm_super_admin bypass role checks
+    if (req.crmUser.role === 'crm_super_admin') {
+      return next()
     }
 
     if (!normalizedRoles.includes(req.crmUser.role)) {
