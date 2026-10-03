@@ -1,4 +1,4 @@
-const fs = require('fs')
+﻿const fs = require('fs')
 const CmsCandidate = require('../../models/cms/CmsCandidate')
 const CmsCompany = require('../../models/cms/CmsCompany')
 const CmsInterview = require('../../models/cms/CmsInterview')
@@ -2026,9 +2026,9 @@ const updateRemarks = async (req, res) => {
   })
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ATS SCAN ENGINE — brutal in-memory keyword scoring across all candidates
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ATS SCAN ENGINE â€” brutal in-memory keyword scoring across all candidates
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Weighted fields: higher = more important for ATS ranking
 const ATS_FIELDS = [
@@ -2064,7 +2064,7 @@ const scoreKeyword = (keyword, fieldValue, weight, isArray) => {
   for (const val of values) {
     if (!val) continue
     if (val === kw) {
-      best = Math.max(best, weight * 3)          // exact match — triple score
+      best = Math.max(best, weight * 3)          // exact match â€” triple score
     } else if (val.split(/\s+/).includes(kw)) {
       best = Math.max(best, weight * 2)          // whole word match
     } else if (val.includes(kw)) {
@@ -2132,7 +2132,7 @@ const atsScanCandidates = async (req, res) => {
     )
 
     const normalizedScore = maxPossibleScore > 0
-      ? Math.round((totalScore / maxPossibleScore) * 1000) / 10  // 0–100 scale, 1 decimal
+      ? Math.round((totalScore / maxPossibleScore) * 1000) / 10  // 0â€“100 scale, 1 decimal
       : 0
 
     scored.push({
@@ -2178,8 +2178,95 @@ const atsScanCandidates = async (req, res) => {
   })
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ATS PDF IMPORT — upload PDFs, extract text, create candidates, run ATS scan
+// ─────────────────────────────────────────────────────────────────────────────
+const atsImportResumePdfs = async (req, res) => {
+  const files = req.files || []
+  if (!files.length) {
+    return res.status(400).json({ message: 'No PDF files uploaded' })
+  }
+
+  const rawKeywords = String(req.body?.keywords || '').trim()
+  const importResults = []
+
+  for (const file of files) {
+    const fileName = file.originalname || 'resume.pdf'
+    let extractedText = ''
+    try {
+      const buf = file.buffer || fs.readFileSync(file.path)
+      const parsed = await pdfParse(buf)
+      extractedText = (parsed.text || '').trim()
+    } catch (err) {
+      console.error(`PDF parse failed for ${fileName}:`, err.message)
+      importResults.push({ fileName, status: 'error', error: 'Could not read PDF text' })
+      continue
+    }
+
+    if (!extractedText) {
+      importResults.push({ fileName, status: 'error', error: 'PDF appears to be image-based (no text found)' })
+      continue
+    }
+
+    const mobileMatch = extractedText.match(/(?<!\d)([6-9]\d{9})(?!\d)/)
+    const mobileNumber = mobileMatch ? mobileMatch[1] : null
+    const firstLine = extractedText.split('\n').map((l) => l.trim()).filter(Boolean)[0] || ''
+    const guessedName = firstLine || fileName.replace(/\.pdf$/i, '').replace(/[-_]/g, ' ')
+
+    let existingCandidate = mobileNumber ? await CmsCandidate.findOne({ mobileNumber }).lean() : null
+
+    if (existingCandidate) {
+      await CmsCandidate.updateOne({ _id: existingCandidate._id }, { $set: { resumeText: extractedText } })
+      importResults.push({ fileName, status: 'duplicate', candidateId: String(existingCandidate._id), candidateName: existingCandidate.fullName || guessedName })
+    } else {
+      const candidateCode = await nextCandidateCode()
+      const newCandidate = await CmsCandidate.create({
+        fullName: guessedName,
+        mobileNumber: mobileNumber || '',
+        resumeText: extractedText,
+        candidateCode,
+        createdBy: req.user._id,
+        documents: [{ documentType: 'updatedResume', documentLabel: 'Updated Resume', fileName, fileUrl: '', mimeType: 'application/pdf', size: file.size || 0, extractedText, uploadedAt: new Date() }]
+      })
+      await ensureRemark(newCandidate._id)
+      invalidateReferenceCaches()
+      importResults.push({ fileName, status: 'created', candidateId: String(newCandidate._id), candidateName: guessedName })
+    }
+  }
+
+  let atsResults = null
+  if (rawKeywords) {
+    const keywords = rawKeywords.split(/[,;|\n]+/).map((k) => k.trim()).filter(Boolean).slice(0, 30)
+    if (keywords.length) {
+      const allCandidates = await CmsCandidate.find({}).select('fullName mobileNumber emailId keySkills currentDesignation appliedFor careerSummary experienceDepartment preferredIndustry lookingForField education resumeText keyResponsibilities totalExperience candidateCode gender createdAt').lean()
+      const maxPossibleScore = keywords.length * ATS_FIELDS.reduce((sum, f) => sum + f.weight * 3, 0)
+      const scored = []
+      for (const cand of allCandidates) {
+        let totalScore = 0
+        const matchedKeywords = []
+        const missedKeywords = []
+        for (const kw of keywords) {
+          let kwScore = 0
+          for (const field of ATS_FIELDS) kwScore += scoreKeyword(kw, cand[field.key], field.weight, field.isArray)
+          if (kwScore > 0) { matchedKeywords.push(kw); totalScore += kwScore } else missedKeywords.push(kw)
+        }
+        if (totalScore === 0) continue
+        const matchPercent = Math.min(100, Math.round((matchedKeywords.length / keywords.length) * 100))
+        const normalizedScore = maxPossibleScore > 0 ? Math.round((totalScore / maxPossibleScore) * 1000) / 10 : 0
+        scored.push({ _id: cand._id, candidateCode: cand.candidateCode, fullName: cand.fullName, mobileNumber: cand.mobileNumber, keySkills: cand.keySkills || [], currentDesignation: cand.currentDesignation, appliedFor: cand.appliedFor, education: cand.education, totalExperience: cand.totalExperience, gender: cand.gender, createdAt: cand.createdAt, atsScore: normalizedScore, atsMatchPercent: matchPercent, atsMatchedKeywords: matchedKeywords, atsMissedKeywords: missedKeywords, atsTotalKeywords: keywords.length })
+      }
+      scored.sort((a, b) => b.atsScore !== a.atsScore ? b.atsScore - a.atsScore : b.atsMatchPercent - a.atsMatchPercent)
+      atsResults = { totalScanned: allCandidates.length, totalMatched: scored.length, keywords, results: scored }
+    }
+  }
+
+  res.json({ importResults, atsResults })
+}
 module.exports = {
   createCandidate,
   importCandidates,
@@ -2209,5 +2296,6 @@ module.exports = {
   deleteInterview,
   getRemarks,
   updateRemarks,
-  atsScanCandidates
+  atsScanCandidates,
+  atsImportResumePdfs
 }
