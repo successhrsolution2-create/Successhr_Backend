@@ -1,4 +1,4 @@
-﻿const fs = require('fs')
+const fs = require('fs')
 const CmsCandidate = require('../../models/cms/CmsCandidate')
 const CmsCompany = require('../../models/cms/CmsCompany')
 const CmsInterview = require('../../models/cms/CmsInterview')
@@ -2220,22 +2220,50 @@ const atsImportResumePdfs = async (req, res) => {
 
     let existingCandidate = mobileNumber ? await CmsCandidate.findOne({ mobileNumber }).lean() : null
 
-    if (existingCandidate) {
-      await CmsCandidate.updateOne({ _id: existingCandidate._id }, { $set: { resumeText: extractedText } })
-      importResults.push({ fileName, status: 'duplicate', candidateId: String(existingCandidate._id), candidateName: existingCandidate.fullName || guessedName })
-    } else {
-      const candidateCode = await nextCandidateCode()
-      const newCandidate = await CmsCandidate.create({
-        fullName: guessedName,
-        mobileNumber: mobileNumber || '',
-        resumeText: extractedText,
-        candidateCode,
-        createdBy: req.user._id,
-        documents: [{ documentType: 'updatedResume', documentLabel: 'Updated Resume', fileName, fileUrl: '', mimeType: 'application/pdf', size: file.size || 0, extractedText, uploadedAt: new Date() }]
-      })
-      await ensureRemark(newCandidate._id)
-      invalidateReferenceCaches()
-      importResults.push({ fileName, status: 'created', candidateId: String(newCandidate._id), candidateName: guessedName })
+    try {
+      const fileUrl = await uploadToS3(file, 'candidate-documents')
+      
+      const documentPayload = {
+        documentType: 'updatedResume',
+        documentLabel: 'Updated Resume',
+        fileName,
+        fileUrl,
+        mimeType: 'application/pdf',
+        size: file.size || 0,
+        extractedText,
+        uploadedAt: new Date()
+      }
+
+      if (existingCandidate) {
+        await CmsCandidate.updateOne(
+          { _id: existingCandidate._id },
+          { 
+            $set: { resumeText: extractedText },
+            $pull: { documents: { documentType: 'updatedResume' } }
+          }
+        )
+        await CmsCandidate.updateOne(
+          { _id: existingCandidate._id },
+          { $push: { documents: documentPayload } }
+        )
+        importResults.push({ fileName, status: 'duplicate', candidateId: String(existingCandidate._id), candidateName: existingCandidate.fullName || guessedName })
+      } else {
+        const candidateCode = await nextCandidateCode()
+        const newCandidate = await CmsCandidate.create({
+          fullName: guessedName,
+          mobileNumber: mobileNumber || '',
+          resumeText: extractedText,
+          candidateCode,
+          createdBy: req.user._id,
+          documents: [documentPayload]
+        })
+        await ensureRemark(newCandidate._id)
+        invalidateReferenceCaches()
+        importResults.push({ fileName, status: 'created', candidateId: String(newCandidate._id), candidateName: guessedName })
+      }
+    } catch (err) {
+      console.error(`File upload failed for ${fileName}:`, err.message)
+      importResults.push({ fileName, status: 'error', error: 'Failed to save physical document file' })
     }
   }
 
