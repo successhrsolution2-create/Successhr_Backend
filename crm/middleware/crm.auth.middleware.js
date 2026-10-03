@@ -1,4 +1,4 @@
-const jwt = require('jsonwebtoken')
+﻿const jwt = require('jsonwebtoken')
 const CrmUser = require('../models/CrmUser.model')
 
 const CRM_ROLES = ['crm_super_admin', 'crm_employee']
@@ -30,6 +30,30 @@ const verifyCrmToken = async (req, res, next) => {
   const token = getBearerToken(req)
 
   if (!token) {
+    // FALLBACK: Check if there's a valid CMS admin token in cookies
+    const { tokenFromRequest } = require('../../utils/authCookie')
+    const cmsToken = tokenFromRequest(req)
+    if (cmsToken) {
+      try {
+        const decodedCms = jwt.verify(cmsToken, process.env.JWT_SECRET, { algorithms: ['HS256'] })
+        if (['superAdmin', 'candidateAdmin'].includes(decodedCms.role)) {
+          const adminUser = await CrmUser.findOne({ role: 'crm_super_admin' })
+          if (adminUser) {
+            req.crmUser = {
+              id: adminUser._id.toString(),
+              _id: adminUser._id,
+              name: 'CMS Admin',
+              email: adminUser.email,
+              role: 'crm_super_admin'
+            }
+            return next()
+          }
+        }
+      } catch (err) {
+        // Ignore and fall through to standard 401
+      }
+    }
+
     return res.status(401).json({
       success: false,
       message: 'CRM authorization token is required'
